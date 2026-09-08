@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en-GB"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Spare">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#141018">
+<title>Spare</title>
+<style>
+  :root{--bg:#141018;--card:#1e1727;--card2:#251c30;--line:#352741;--pop:#c084fc;
+        --pop2:#a855f7;--dim:#9b8aa8;--good:#7ee787;--warn:#ffcc66;--bad:#ff7b72;
+        --text:#f4eff8}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{overscroll-behavior-y:contain}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+       padding:max(14px,env(safe-area-inset-top)) 14px max(28px,env(safe-area-inset-bottom))}
+  .top{display:flex;justify-content:space-between;align-items:baseline;margin:2px 2px 12px}
+  .top h1{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+          margin:0;font-weight:700}
+  .top .day{font-size:12px;color:var(--dim)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;
+        padding:16px;margin-bottom:11px}
+  .hero{text-align:center;padding:24px 16px 20px;
+        background:linear-gradient(160deg,#241a30,#1a1422)}
+  .hero .l{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .hero .n{font-size:54px;font-weight:800;letter-spacing:-.03em;line-height:1.05;
+           color:var(--pop);font-variant-numeric:tabular-nums;margin:6px 0 4px}
+  .hero .s{font-size:13px;color:var(--dim);line-height:1.5}
+  .pace{margin-top:16px}
+  .bar{height:9px;background:#120e18;border-radius:99px;overflow:hidden;position:relative}
+  .bar i{position:absolute;inset:0 auto 0 0;border-radius:99px;
+         background:linear-gradient(90deg,var(--pop2),var(--pop))}
+  .bar u{position:absolute;top:-4px;width:2px;height:17px;background:var(--text);
+         opacity:.75;border-radius:2px}
+  .paceRow{display:flex;justify-content:space-between;font-size:12px;
+           color:var(--dim);margin-top:7px}
+  .row{display:flex;justify-content:space-between;align-items:center;
+       padding:11px 0;border-bottom:1px solid var(--line);gap:10px}
+  .row:last-child{border-bottom:0}
+  .row .k{color:var(--dim);font-size:14px}
+  .row .v{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+  .big .v{font-size:19px}
+  input,button,select{font-family:inherit}
+  #bal{width:100%;background:#120e18;border:1px solid var(--line);color:var(--text);
+       border-radius:14px;padding:15px;font-size:26px;text-align:center;font-weight:700;
+       font-variant-numeric:tabular-nums;margin-top:9px}
+  #bal:focus{outline:none;border-color:var(--pop)}
+  label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+  .pos{color:var(--good)} .neg{color:var(--bad)} .warnc{color:var(--warn)}
+  .note{font-size:12.5px;color:var(--dim);margin-top:9px;line-height:1.5}
+  h2{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+     margin:0 0 4px;font-weight:700}
+  .up{max-height:44vh;overflow:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
+  .up .row{padding:12px 4px;cursor:pointer}
+  .up .row.skip .k,.up .row.skip .v{text-decoration:line-through;opacity:.38}
+  .up .row.moved .v,.up .row.amt .v{color:var(--warn)}
+  .up .row.past{opacity:.3}
+  .tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+       border:1px solid var(--line);border-radius:6px;padding:1px 5px;margin-left:6px}
+  .ed{background:var(--card2);border-radius:14px;padding:13px;margin:2px 0 10px}
+  .ed .b{display:flex;gap:7px;margin-bottom:9px}
+  .ed button{flex:1;background:#171122;border:1px solid var(--line);color:var(--text);
+             border-radius:11px;padding:12px 6px;font-size:13.5px}
+  .ed button.on{background:var(--pop);color:#17101f;border-color:var(--pop);font-weight:700}
+  .ed .f{display:flex;gap:7px}
+  .ed .f input{flex:1;background:#171122;border:1px solid var(--line);color:var(--text);
+               border-radius:11px;padding:11px;font-size:15px;min-width:0}
+  .foot{text-align:center;color:#5b4d69;font-size:11px;margin-top:16px;line-height:1.6}
+  .chk{width:26px;height:26px;margin:0;accent-color:var(--pop)}
+</style><link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+</head><body>
+
+<div class="top"><h1>Spare</h1><span class="day" id="cycle"></span></div>
+
+<div class="card">
+  <label for="bal">Balance right now</label>
+  <input id="bal" type="text" inputmode="decimal" placeholder="0.00">
+  <div class="row" id="partnerRow" style="border:0;padding-bottom:0">
+    <span class="k">Sent <b id="partnerName"></b> his <b id="partnerAmt"></b>?</span>
+    <input type="checkbox" id="paidPartner" class="chk">
+  </div>
+  <div class="note">Read the balance off your banking app. Your bank already knows what
+  you spent &mdash; there is nothing else to type.</div>
+</div>
+
+<div class="card hero">
+  <div class="l">Safe to spend</div>
+  <div class="n" id="safe">&mdash;</div>
+  <div class="s" id="safeNote"></div>
+  <div class="pace" id="paceBox">
+    <div class="bar"><i id="barFill"></i><u id="barMark"></u></div>
+    <div class="paceRow"><span id="paceL"></span><span id="paceR"></span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" id="carryRow"><span class="k">Carried over from last month<br><small style="opacity:.6">yours, and not spent on bills</small></span><span class="v pos" id="carry"></span></div>
+  <div class="row big"><span class="k">Your spare this month</span><span class="v" id="herSpare"></span></div>
+  <div class="row big"><span class="k"><span id="partnerName2"></span>'s spare</span><span class="v" id="hisSpare"></span></div>
+  <div class="row"><span class="k">Bills to split<br><small style="opacity:.6">your share of the rent only</small></span><span class="v" id="bills"></span></div>
+  <div class="row"><span class="k">Actually leaving the account<br><small style="opacity:.6">the whole rent, not just your share</small></span><span class="v" id="toGo"></span></div>
+  <div class="row"><span class="k">Still to come in</span><span class="v pos" id="toCome"></span></div>
+</div>
+
+<div class="card">
+  <h2>Coming up &mdash; tap to change</h2>
+  <div class="up" id="upcoming"></div>
+  <div id="addBox"></div>
+  <div class="note" id="changed"></div>
+  <div id="sendBox" style="display:none;margin-top:10px">
+    <button id="mailBtn" style="width:100%;background:var(--pop);color:#17101f;
+            border:0;border-radius:12px;padding:14px;font-size:15px;font-weight:700">
+      Send changes to Seph</button>
+    <button id="copyBtn" style="width:100%;margin-top:7px;background:#1c1526;
+            border:1px solid var(--line);color:var(--dim);border-radius:12px;
+            padding:11px;font-size:13px">or just copy it</button>
+    <div class="note">Sending opens your email with it written out. I read that
+    mailbox, so it reaches me whether or not you're connected &mdash; and I decide
+    whether any of it should change your bills permanently.</div>
+  </div>
+</div>
+
+<div class="foot" id="foot"></div>
+<div id="updateBox"></div>
+
+<script>
+// THE HOSTED SHELL CARRIES NO FIGURES. Eden's model arrives once, in the part of
+// a URL after the '#', which browsers never transmit to the server - so GitHub
+// holds generic code and her bills only ever exist on her own phone.
+// null is null in the hosted build and the real object in the local one.
+// R is the RULES - "Food, 90, weekly, Wednesdays" - not one month's answers.
+// D is what the app works out from them for whatever day it is today.
+//
+// This is why the app does not go stale. The first version baked in 38 events
+// for one cycle and would have been silently showing September in October,
+// with no way to fix it except a rebuild, a new QR and Eden pasting a new code
+// into her phone. Rules regenerate themselves every time she opens it.
+let R = null;
+let D = null;
+
+// ---------------------------------------------------------------- scheduler
+// Ported from schedule.py, which is the version checked against eleven bank
+// statements. test_schedule.py runs the two against each other across a full
+// year of dates, because two implementations of one rule always drift and the
+// only question is whether anything notices.
+//
+// ALL DATE ARITHMETIC IS UTC. A local-time Date shifts by a day across the
+// October clock change, which would move every bill in the cycle by one day
+// and change which ones fall inside it.
+function ymd(d){ return d.toISOString().slice(0,10); }
+function mkUTC(y,m,day){ return new Date(Date.UTC(y,m-1,day)); }
+function addDays(d,n){ return new Date(d.getTime()+n*86400000); }
+// Monday=0 .. Sunday=6, matching Python's weekday(), because the rules were
+// written against it.
+function pyDow(d){ return (d.getUTCDay()+6)%7; }
+
+function monthDay(y,m,day){
+  // Day of month, clamped down for short months: the 31st of February is the
+  // 28th, so a bill on the 31st never silently vanishes.
+  let dd = day;
+  while (dd > 0) {
+    const d = mkUTC(y,m,dd);
+    if (d.getUTCMonth() === m-1) return d;
+    dd--;
+  }
+  return mkUTC(y,m,1);
+}
+
+function paydayFor(y,m){
+  // Payday is a fixed day of the month, moved back when it falls at a
+  // weekend. Nine for nine across a year of statements, including both a
+  // Saturday and a Sunday landing on the Friday before.
+  let d = monthDay(y,m,9);
+  const w = pyDow(d);
+  if (w >= 5) d = addDays(d, w === 5 ? -1 : -2);
+  return d;
+}
+
+function currentCycle(today){
+  const start = paydayFor(today.getUTCFullYear(), today.getUTCMonth()+1);
+  let y = start.getUTCFullYear(), m = start.getUTCMonth()+2;
+  if (m > 12) { m = 1; y++; }
+  return [start, addDays(paydayFor(y,m), -1)];
+}
+
+function occurrences(it, frm, to){
+  const out = [], e = it.e, o = it.o;
+  if (e === "m" || e === "mw") {
+    // "mw" moves off a weekend, the same rule the cycle boundary uses. Without
+    // it the boundary and the payment disagreed about which day money arrives,
+    // and the app told her income was still coming after it had landed.
+    let y = frm.getUTCFullYear(), m = frm.getUTCMonth()+1;
+    for (let i = 0; i < 15; i++) {
+      let d = monthDay(y, m, parseInt(o,10));
+      if (e === "mw") {
+        const w = pyDow(d);
+        if (w >= 5) d = addDays(d, w === 5 ? -1 : -2);
+      }
+      if (d >= frm && d <= to) out.push(d);
+      m++; if (m > 12) { m = 1; y++; }
+    }
+  } else if (e.charAt(0) === "c") {
+    // A fixed number of times per cycle, resetting at payday. A plain weekly
+    // rule generated a fifth food shop and put the total £90 over the figure
+    // Eden had verified three ways.
+    const n = parseInt(e.slice(1),10);
+    let d = addDays(frm, ((parseInt(o,10) - pyDow(frm)) % 7 + 7) % 7);
+    while (out.length < n && d <= to) { out.push(d); d = addDays(d,7); }
+  } else if (e === "w" || e === "f") {
+    const step = e === "w" ? 7 : 14;
+    // "v" means the date genuinely moves week to week. Anchored to the start
+    // of the window, and the app's tap-to-change is how a real date gets
+    // corrected.
+    let d;
+    if (o.length === 10 && o.charAt(4) === "-") {
+      // A REAL ANCHOR DATE. Anchoring to the window start instead invents an
+      // occurrence on payday whenever the cycle happens to begin near one, and
+      // it drifts differently every month. Eden's argument for why a real
+      // anchor is also the SAFE choice: a fortnightly arrangement that slips
+      // slips LATER, so drift only ever pushes a visit out of the cycle.
+      d = new Date(o + "T00:00:00Z");
+      while (d < frm) d = addDays(d, step);
+      while (addDays(d, -step) >= frm) d = addDays(d, -step);
+    } else if (o === "v") {
+      d = frm;
+    } else {
+      d = addDays(frm, ((parseInt(o,10) - pyDow(frm)) % 7 + 7) % 7);
+    }
+    while (d <= to) { if (d >= frm) out.push(d); d = addDays(d, step); }
+  } else if (e === "4") {
+    let d = new Date(o + "T00:00:00Z");
+    while (d > frm) d = addDays(d,-28);
+    while (d < frm) d = addDays(d,28);
+    while (d <= to) { out.push(d); d = addDays(d,28); }
+  }
+  return out;
+}
+
+function buildModel(R, todayISO){
+  const today = new Date(todayISO + "T00:00:00Z");
+  const cyc = currentCycle(today);
+  const a = cyc[0], b = cyc[1];
+
+  // THE PROJECTION STARTS AT TODAY WHEN TODAY IS BEFORE PAYDAY, and that is a
+  // fix rather than a detail. The cycle runs from the NEXT payday, so on the
+  // 1st to the 8th of a month the bills between now and then sat in no cycle at
+  // all - not in the one being shown, already past in the one it had stopped
+  // looking at. Measured over a year: 93 such days, and on the worst one the
+  // app would have called several hundred pounds safe to spend that was not.
+  const from = today < a ? today : a;
+  const cutoff = ymd(from);
+
+  // GENERATE PER CYCLE, THEN FILTER. Anything whose date genuinely moves is
+  // anchored to the START of the window it is generated in, so generating from
+  // `from` would drag those items onto today and invent bills that are not due.
+  // That shipped for one build and reported an overdraft against a balance
+  // that was fine.
+  function windowEvents(a1, b1){
+    const out = [];
+    const add = function(it, sign){
+      occurrences(it, a1, b1).forEach(function(d){
+        const s = ymd(d);
+        if (s >= cutoff) out.push({d: s, a: sign * it.a, n: it.n});
+      });
+    };
+    R.bills.forEach(function(it){ add(it, -1); });
+    R.income.forEach(function(it){ add(it, 1); });
+    return out;
+  }
+
+  let ev = windowEvents(a, b);
+  if (today < a) {
+    // The days between today and payday belong to the cycle that is ENDING, so
+    // they get generated on that cycle's anchor rather than this one's.
+    let pm = a.getUTCMonth(), py = a.getUTCFullYear();
+    if (pm === 0) { pm = 12; py--; }
+    ev = windowEvents(paydayFor(py, pm), addDays(a, -1)).concat(ev);
+  }
+  // Credits before debits on the same day, or £190 of bills gets projected as
+  // leaving before the £1,756 that pays for them lands.
+  ev.sort(function(x,y){ return x.d < y.d ? -1 : x.d > y.d ? 1 : y.a - x.a; });
+
+  // The BILL TOTAL is the budget figure and covers the whole cycle, whatever
+  // the projection window is. Rent counts at Eden's £25 share here: the other
+  // the rest is the fixed part that was never either of theirs.
+  let bills = 0;
+  R.bills.forEach(function(it){
+    const amt = it.n === "Rent" ? R.rentSplit : it.a;
+    bills += amt * occurrences(it, a, b).length;
+  });
+  bills = Math.round(bills*100)/100;
+
+  const pot = R.hers + R.his, spare = pot - bills;
+  // The two income lines by POSITION, not by name. Naming them would put Eden's
+  // benefit status in a public repo, and the rules already carry the labels.
+  const nameA = (R.income[0] || {}).n, nameB = (R.income[1] || {}).n;
+  const inA = ev.filter(function(e){ return e.n === nameA; })[0];
+  const inB = ev.filter(function(e){ return e.n === nameB; })[0];
+
+  return {
+    hers: R.hers, his: R.his, bills: bills,
+    herSpare: Math.round(spare * R.hers / pot * 100)/100,
+    hisSpare: Math.round(spare * R.his  / pot * 100)/100,
+    cycleStart: ymd(a), cycleEnd: ymd(b),
+    inADate:  inA ? inA.d : ymd(a), inAAmount:  inA ? inA.a : 0,
+    inBDate: inB ? inB.d : ymd(b), inBAmount: inB ? inB.a : 0,
+    events: ev,
+    built: R.built, mailTo: R.mailTo, partner: R.partner,
+    carryover: R.carryover
+  };
+}
+// Is this running as an installed app rather than a browser tab? iOS uses the
+// non-standard navigator.standalone; everything else uses the display-mode
+// media query. Both are checked because Eden is on iOS and the manifest also
+// makes this installable elsewhere.
+function installed(){
+  try {
+    return navigator.standalone === true
+        || (typeof matchMedia === "function"
+            && matchMedia("(display-mode: standalone)").matches);
+  } catch (e) { return false; }
+}
+
+(function setup(){
+  // THREE SOURCES FOR THE SETUP CODE, and the third is the one that works when
+  // the other two cannot.
+  //
+  //   1. the URL fragment   - scanning the QR in Safari
+  //   2. localStorage       - a device already set up
+  //   3. spare:pending      - a code PASTED BY HAND into the empty state
+  //
+  // (3) exists because neither (1) nor (2) crosses into an installed app on
+  // iOS. The manifest declares start_url, so the shortcut launches at a fixed
+  // address rather than the one it was added from and the fragment is thrown
+  // away at install time; and a home-screen web app has its own storage and
+  // cannot read Safari's. Eden's phone demonstrated both. The clipboard is the
+  // only thing that gets across.
+  let frag = location.hash || "";
+  try {
+    const pending = localStorage.getItem("spare:pending");
+    if (pending && frag.indexOf("#r=") !== 0) {
+      frag = "#r=" + pending;
+      localStorage.removeItem("spare:pending");
+    }
+  } catch (e) { /* storage unavailable - the fragment is still worth trying */ }
+
+  // EVERY FAILURE BRANCH REPORTS THE REAL ERROR. The first versions said "ask
+  // Seph for a new one" and nothing else, so two failed installs produced no
+  // information at all and the cause had to be found by replaying the JS on the
+  // laptop. A message Eden can read back is worth more than a tidy one.
+  const oops = (where, e) => alert("Setup failed (" + where + "): "
+                                   + (e && e.message ? e.message : e));
+
+  const readRules = payload => {
+    // VALIDATE. A damaged code that decodes into a plausible-looking budget is
+    // far worse than one that refuses: a test tore a single separator out and
+    // this quietly produced a model with the wrong bills and NO income at all,
+    // which would have shown Eden a confident, wrong number. Anything that is
+    // not obviously intact now throws and she gets told.
+    const parts = payload.split("~");
+    if (parts.length !== 3) {
+      throw new Error("this code has " + parts.length + " sections, not 3 - it "
+                    + "looks cut short or joined up. Copy it again.");
+    }
+    const f = parts[0].split(",");
+    if (f.length !== 7) {
+      // 15 is the OLD format's header, from before the app carried rules. Say
+      // so, rather than counting fields at her: she can act on "this code is
+      // out of date" and cannot act on a number.
+      throw new Error(f.length > 10
+        ? "this is an old-style setup code. Scan the NEW QR on the setup page "
+          + "(refresh it first), copy that one, and paste it here."
+        : "this code looks cut short - it has " + f.length + " fields where the "
+          + "first section needs 7. Copy the whole thing and try again.");
+    }
+    for (let i = 0; i < 4; i++) {
+      if (!isFinite(+f[i])) throw new Error("field " + (i+1) + " is not a number.");
+    }
+    const rows = (chunk, what) => {
+      const got = (chunk ? chunk.split(";") : []).map(r => {
+        const p = r.split(",");
+        if (p.length !== 4) {
+          throw new Error("a " + what + " line has " + p.length + " fields, not 4.");
+        }
+        if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
+        return {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
+      });
+      if (!got.length) throw new Error("there are no " + what + " lines in this code.");
+      return got;
+    };
+    return {
+      hers: +f[0], his: +f[1], rentSplit: +f[2], carryover: +f[3],
+      partner: f[4], mailTo: f[5], built: f[6],
+      bills: rows(parts[1], "bill"), income: rows(parts[2], "income")
+    };
+  };
+
+  const finish = rules => {
+    R = rules;
+    localStorage.setItem("spare:rules", JSON.stringify(R));
+    // Keep the code itself too. An installed app can only be fed by clipboard,
+    // so the browser has to be able to hand it back.
+    // Strip the code off the URL ONLY once installed. Stripping it always is
+    // what broke Add to Home Screen: iOS saves whatever URL is showing when
+    // Share is tapped, so wiping the fragment immediately meant the shortcut
+    // captured a bare address. In a browser tab there is an address bar to
+    // protect and a shortcut to populate; in an installed app there is neither.
+    if (installed()) {
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+    // DO NOT render from in here. `render` is a function DECLARATION so it is
+    // hoisted and the call succeeds - but it reads `today`, a const declared
+    // further down and still in its temporal dead zone while setup runs. The
+    // script renders at the bottom regardless, so the call was redundant AND
+    // fatal, and it could only ever fire on a code that actually decoded.
+  };
+
+  if (frag.indexOf("#r=") === 0) {
+    try {
+      const raw = decodeURIComponent(frag.slice(3));
+      try { localStorage.setItem("spare:code", raw); } catch (e) {}
+      finish(readRules(raw));
+    } catch (e) { oops("setup code", e); }
+  }
+
+  if (!R) {
+    try {
+      const saved = localStorage.getItem("spare:rules");
+      if (saved) R = JSON.parse(saved);
+    } catch (e) { oops("saved setup", e); }
+  }
+  if (R) {
+    try { localStorage.setItem("spare:rules", JSON.stringify(R)); } catch (e) {}
+  }
+
+  // A phone set up before the rules format existed holds a whole computed model
+  // under spare:model. Use it rather than dying, but flag it: it is one month
+  // frozen in amber and it goes wrong the day the cycle turns over.
+  if (!R) {
+    try {
+      const legacy = localStorage.getItem("spare:model");
+      if (legacy) { D = JSON.parse(legacy); D.stale = true; }
+    } catch (e) {}
+  }
+})();
+
+// Work out THIS cycle, today, every single time the app opens. This is the line
+// that means October looks after itself.
+if (R && !D) {
+  try {
+    D = buildModel(R, today());
+  } catch (e) {
+    alert("Could not work out this month's schedule: " + (e.message || e));
+  }
+}
+
+if (!D) {
+  // THE EMPTY STATE TAKES A CODE BY HAND, and that is not a nicety - it is the
+  // only route into an INSTALLED app on iOS that does not depend on guessing
+  // how iOS behaves.
+  //
+  // Three attempts died here. The manifest declares start_url, and an installed
+  // web app launches at start_url rather than at the URL it was added from, so
+  // the setup fragment is discarded at install time. A home-screen app also has
+  // its own storage and cannot see what Safari saved. So neither the URL nor
+  // storage crosses that boundary.
+  //
+  // The CLIPBOARD does. Copy in Safari, paste here, done - and it works the
+  // same on every phone, which is more than can be said for anything else tried
+  // so far. The field accepts a bare payload, a #r=... fragment, or the whole
+  // URL, because Eden should not have to know which one she has got.
+  document.body.innerHTML =
+    '<div style="padding:34px 20px;color:#9b8aa8;max-width:520px;margin:0 auto;'
+    + 'font:16px/1.6 -apple-system,system-ui,sans-serif">'
+    + '<div style="font-size:13px;letter-spacing:.18em;text-transform:uppercase;'
+    + 'color:#c084fc;font-weight:700;margin-bottom:14px;text-align:center">Spare</div>'
+    + '<p style="margin:0 0 16px">Not set up on this device yet. Paste your setup '
+    + 'code below &mdash; copy it from the setup page in Safari, then tap Paste.</p>'
+    + '<textarea id="codeIn" rows="4" placeholder="paste the setup code here" '
+    + 'style="width:100%;background:#120e18;border:1px solid #352741;color:#f4eff8;'
+    + 'border-radius:12px;padding:12px;font-size:13px;font-family:ui-monospace,'
+    + 'monospace;resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<button id="pasteBtn" style="flex:1;background:#1c1526;border:1px solid '
+    + '#352741;color:#f4eff8;border-radius:12px;padding:13px;font-size:15px">'
+    + 'Paste</button>'
+    + '<button id="goBtn" style="flex:1;background:#c084fc;border:0;color:#17101f;'
+    + 'border-radius:12px;padding:13px;font-size:15px;font-weight:700">'
+    + 'Set up</button></div>'
+    + '<p id="codeMsg" style="margin:12px 0 0;font-size:13px;color:#ff7b72"></p>'
+    + '<p style="margin:18px 0 0;font-size:13px">Nothing is stored anywhere but '
+    + 'on this phone.</p></div>';
+
+  const field = document.getElementById("codeIn");
+  const msg = document.getElementById("codeMsg");
+
+  document.getElementById("pasteBtn").addEventListener("click", () => {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(t => { field.value = t; },
+        () => { msg.textContent = "Your phone would not hand over the clipboard "
+                                + "- hold down in the box and tap Paste instead."; });
+    } else {
+      msg.textContent = "Hold down in the box above and tap Paste.";
+    }
+  });
+
+  document.getElementById("goBtn").addEventListener("click", () => {
+    const raw = (field.value || "").trim();
+    if (!raw) { msg.textContent = "Nothing in the box yet."; return; }
+    // Accept a whole URL, a #r=... fragment, or the bare payload.
+    const code = raw.indexOf("#r=") >= 0 ? raw.slice(raw.indexOf("#r=") + 3) : raw;
+    try {
+      localStorage.setItem("spare:pending", code);
+      location.hash = "#r=" + code;
+      location.reload();
+    } catch (e) {
+      msg.textContent = "That code did not work: " + (e.message || e);
+    }
+  });
+
+  throw new Error("no model");
+}
+const P = (D.partner || 'your partner');
+const K = "spare:" + D.cycleStart;          // all state is scoped to ONE cycle
+const gbp = n => (n<0?"−":"") + "£" + Math.abs(n).toLocaleString("en-GB",
+              {minimumFractionDigits:2, maximumFractionDigits:2});
+// THE LONDON DATE, NOT THE UTC ONE. toISOString is UTC, so between midnight
+// and 1am British Summer Time the app believed it was still yesterday: past
+// rows greyed wrongly, "lands tomorrow" off by one, and - the real damage -
+// state keyed to the previous cycle and lost at 1am. en-CA gives ISO order.
+// Deliberately a function DECLARATION, not a const arrow. As a const it lived
+// below the setup block that calls it and threw "Cannot access 'today' before
+// initialization" - the third temporal dead zone in this file in one evening,
+// and the second on this exact name. A declaration hoists, so where it sits
+// stops being something anyone has to get right.
+function today(){
+  try {
+    return new Date().toLocaleDateString("en-CA", {timeZone: "Europe/London"});
+  } catch (e) {
+    return new Date().toISOString().slice(0,10);
+  }
+}
+const nice  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
+              {day:"numeric", month:"short"});
+const long  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
+              {day:"numeric", month:"long"});
+
+const load = k => { try { return JSON.parse(localStorage.getItem(K+":"+k)) } catch(e){ return null } };
+const save = (k,v) => localStorage.setItem(K+":"+k, JSON.stringify(v));
+
+// Per-event edits: {skip:true} | {amount:n} | {date:"YYYY-MM-DD"}
+let edits = load("edits") || {};
+// One-offs: money in or out that no rule generates. [{d, a, n}], a>0 is money
+// in. Deliberately NOT in `edits`: an edit says a recurring bill behaved
+// differently and might mean bills.json should change; a one-off says nothing
+// about the rules at all.
+let extras = load("extras") || [];
+
+// MIGRATE ONCE, THEN FORGET. Any edit still keyed by array position is moved
+// onto the identity of whatever it pointed at, and the numeric key is dropped -
+// so it can never later attach itself to a different bill.
+(function migrateEdits(){
+  const numeric = Object.keys(edits).filter(function(k){ return /^\d+$/.test(k); });
+  if (!numeric.length) return;
+  numeric.forEach(function(k){
+    const e = (D && D.events || [])[+k];
+    if (e) {
+      const key = e.d + "|" + e.n;
+      if (!edits[key]) edits[key] = edits[k];
+    }
+    delete edits[k];
+  });
+  try { save("edits", edits); } catch (err) {}
+})();
+let openRow = null;
+
+// AN EDIT IS KEYED BY WHAT IT IS, NOT WHERE IT SITS. Keying by position meant
+// the list changing shape at payday silently moved every edit onto a different
+// bill. Proven: a skip made on the 5th had landed on an entirely different row
+// by the 9th - wrong item struck through, and the wrong one emailed to me as
+// evidence a bill had changed permanently.
+function editKey(e){ return e.d + "|" + e.n; }
+
+function eventsNow(){
+  const fromRules = D.events.map((e,i) => {
+    // NO INDEX FALLBACK. It was meant as a migration and behaved as a permanent
+    // second keyspace: a stale numeric key applies to whatever now sits at that
+    // position, and when both keys exist BOTH edits apply. Old edits are
+    // migrated once, below, rather than left to collide forever.
+    const ed = edits[editKey(e)] || {};
+    // KEEP THE SIGN OF WHAT IT WAS. The minus was unconditional, so correcting
+    // an INCOME amount flipped it into a bill: tapping the four-weekly payment
+    // and typing a figure 5.40 higher moved the budget by 1,164.60 and turned
+    // "your spare" negative. Skip and date-move both handled income correctly;
+    // only the amount edit was sign-blind, and the summary that reaches me read
+    // completely innocent.
+    return {i: editKey(e), d: ed.date || e.d,
+            a: ed.skip ? 0
+               : (ed.amount!=null
+                  ? (e.a < 0 ? -Math.abs(ed.amount) : Math.abs(ed.amount))
+                  : e.a),
+            n: e.n, skip: !!ed.skip, edited: ed.amount!=null, moved: !!ed.date,
+            orig: e.a};
+  });
+  // One-offs sit in the same list and count the same way. Only ones inside this
+  // cycle are shown, so an old one cannot quietly go on affecting the maths.
+  const mine = extras.map((x,j) => ({i: "x"+j, d: x.d, a: x.a, n: x.n,
+                                     skip: false, edited: false, moved: false,
+                                     extra: true, orig: x.a}))
+                     .filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd);
+  return fromRules.concat(mine)
+    .sort((a,b) => a.d < b.d ? -1 : a.d > b.d ? 1 : b.a - a.a);
+}
+
+function render(){
+  const t = today();
+  const raw = document.getElementById("bal").value.replace(/[^0-9.\-]/g,"");
+  const bal = raw === "" ? null : parseFloat(raw);
+  const ev = eventsNow();
+
+  // THE TOTALS FOLLOW THE EDITS. Read off the rules alone, they ignored every
+  // skip and every corrected amount - so cancelling a bill freed the money in
+  // the projection while "Your spare this month" sat there unchanged, which is
+  // the number she actually reads.
+  //
+  // Rent is scaled to her share: only the £25 was ever a shared bill, the £450
+  // fixed part arrives and leaves and was never either of theirs. One-offs
+  // are excluded deliberately - they already move safe-to-spend, and a refund
+  // is not a household bill for the two of them to split.
+  // THE UNSHARED PART IS FIXED, SO THE SPLIT IS ADDITIVE, NOT PROPORTIONAL.
+  // Only the shortfall between the rent and that fixed part was ever a
+  // shared bill. Scaling by 25/475 meant a 50 rent rise moved the split by
+  // 1.32 instead of 50 - it treated the landlord's rise as 94% the government's
+  // problem, which it is not.
+  const rentRule = (R && R.bills || []).filter(function(b){ return b.n === "Rent"; })[0];
+  const housing = (rentRule && rentRule.a) ? (rentRule.a - R.rentSplit) : 0;
+  let billsNow = 0;
+  ev.forEach(function(e){
+    if (e.extra || e.a >= 0) return;
+    // ONLY WHAT FALLS INSIDE THE CYCLE. The event list deliberately reaches
+    // back to today when today is before payday, so the bills due before payday
+    // are subtracted from safe-to-spend - but those belong to the cycle that is
+    // ENDING and must not be charged to the one starting. Summing the whole
+    // list put 83 days a year wrong, by up to 466.86, and once showed her spare
+    // as a negative number when she had 271.75.
+    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    billsNow += (e.n === "Rent") ? Math.max((-e.a) - housing, 0) : (-e.a);
+  });
+  billsNow = Math.round(billsNow * 100) / 100;
+
+  const potNow = D.hers + D.his;
+  const spareNow = potNow - billsNow;
+  const herNow = Math.round(spareNow * D.hers / potNow * 100) / 100;
+  const hisNow = Math.round(spareNow * D.his / potNow * 100) / 100;
+
+  // EVERYTHING AHEAD IS MEASURED FROM THE DAY THE BALANCE WAS TAKEN, not from
+  // today. The balance she typed already contains everything that had happened
+  // by then; anything dated after it is still to come. Anchoring the two halves
+  // to different days is what let the app assert that a payment had landed AND
+  // was still coming, on the same day, and count it twice - 1,135.89 overstated
+  // on one payday, and 1,476.52 for three days running in a month where the
+  // weekend shift pulls payday away from the 9th.
+  const balOnNow = load("balOn");
+  const anchor = (typeof balOnNow === "string" && balOnNow) ? balOnNow : t;
+  const stale = anchor < t;
+  const future = ev.filter(e => e.d > anchor);
+
+  const out = future.reduce((s,e)=> e.a<0 ? s-e.a : s, 0);
+  const inn = future.reduce((s,e)=> e.a>0 ? s+e.a : s, 0);
+  // The holdback follows the SAME anchor. Eden's rule is that she owes him
+  // nothing until his money is actually in her account, so it fires exactly
+  // when the payment is inside the balance she typed.
+  const incomeLanded = D.inADate <= anchor;
+  const paid = document.getElementById("paidPartner").checked;
+  // NEVER HOLD BACK A NEGATIVE. If bills exceed the pot his share goes negative,
+  // and subtracting a negative ADDS it - one mistyped amount turned an overdraft
+  // into 642 of extra "safe to spend". A share that does not exist is zero.
+  const owedPartner = (incomeLanded && !paid) ? Math.max(hisNow, 0) : 0;
+
+  document.getElementById("cycle").textContent = nice(D.cycleStart)+" – "+nice(D.cycleEnd);
+  document.getElementById("partnerAmt").textContent = gbp(Math.max(hisNow, 0));
+  const an = document.getElementById("partnerName");
+  if (an) an.textContent = P;
+  const an2 = document.getElementById("partnerName2");
+  if (an2) an2.textContent = P;
+  document.getElementById("partnerRow").style.display = incomeLanded ? "" : "none";
+  // CARRY-OVER. Eden, 8 Sept 2026: leftover "should both rollover into the new
+  // month but NOT be used for bills" — because "i shouldnt have to pay more bills
+  // because ive saved more". If it were treated as income it would lift her share
+  // of the ratio and charge her MORE bills for having underspent, which is a
+  // budget that punishes care. It is hers alone: the partner's share is transferred to
+  // him each cycle, so whatever is still in her account at the end is her own.
+  const carry = D.carryover || 0;
+  document.getElementById("carryRow").style.display = carry > 0 ? "" : "none";
+  document.getElementById("carry").textContent = "+" + gbp(carry);
+
+  document.getElementById("herSpare").textContent = gbp(herNow + carry);
+  document.getElementById("hisSpare").textContent = gbp(hisNow);
+  document.getElementById("bills").textContent   = gbp(billsNow);
+  document.getElementById("toGo").textContent    = gbp(-out);
+  document.getElementById("toCome").textContent  = gbp(inn);
+
+  const el = document.getElementById("safe"), note = document.getElementById("safeNote");
+  const pb = document.getElementById("paceBox");
+
+  if (bal === null || isNaN(bal)) {
+    el.textContent = "—"; el.className = "n";
+    note.textContent = "Enter your balance above";
+    pb.style.display = "none";
+  } else {
+    // Cap by BOTH today's balance and the lowest point ahead. You cannot spend
+    // money that has not arrived, and you must not spend money a later bill needs.
+    let run = bal, low = bal, lowOn = t;
+    for (const e of future) { run += e.a; if (run < low) { low = run; lowOn = e.d; } }
+    const safe = Math.min(bal, low) - owedPartner;
+    el.textContent = gbp(Math.max(safe, 0));
+    // A BALANCE FROM A PREVIOUS DAY CANNOT BE PROJECTED HONESTLY. Everything
+    // she has spent since is invisible, so the figure can only ever be too
+    // high. Saying so is the whole fix: the app knew the balance was four weeks
+    // old and spent it anyway.
+    if (stale) { note.className = "s warnc"; }
+    el.className = "n " + (safe < 0 ? "neg" : safe < 40 ? "warnc" : "");
+
+    let why;
+    if (safe < 0)      why = "nothing spare — " + gbp(bal) + " in the account"
+                           + (owedPartner ? " and " + gbp(owedPartner) + " of it is " + P + "'s." : ".");
+    else if (low < bal) why = "held down by your lowest point, " + gbp(low)
+                           + " on " + long(lowOn)
+                           + (owedPartner ? ", after " + P + "'s " + gbp(owedPartner) + "." : ".");
+    else               why = gbp(bal) + " in the account"
+                           + (owedPartner ? ", holding back " + P + "'s " + gbp(owedPartner) + "."
+                                       : paid ? " and " + P + " is paid." : ", all yours.");
+    // THE STALE WARNING GOES FIRST AND ALWAYS. It was written as one more
+    // branch in the if/else above, which meant "held down by your lowest point"
+    // won and the warning never appeared at all. A warning that only shows when
+    // nothing else needs saying is not a warning - and this one is about a
+    // figure that can only ever be too high.
+    if (stale) {
+      why = "⚠ this balance is from " + long(anchor)
+          + " — anything you have spent since is not in it. Update it above. "
+          + why;
+    }
+    // What is landing NEXT matters more than what is landing in a fortnight.
+    // With almost nothing in the account the useful sentence names the payment
+    // arriving TOMORROW, not the one a fortnight out - so the nearer one wins.
+    const soon = [];
+    const lbl = (d, f) => ((D.events || []).find(e => e.d === d && e.a > 0)
+                       || {}).n || f;
+    if (D.inADate >= t)  soon.push([lbl(D.inADate, "Income"),
+                                   D.inAAmount, D.inADate]);
+    if (D.inBDate >= t) soon.push([lbl(D.inBDate, "Income"),
+                                   D.inBAmount, D.inBDate]);
+    soon.sort((a,b) => a[2] < b[2] ? -1 : 1);
+    for (const [n,a,d] of soon) {
+      const days = Math.round((new Date(d+"T00:00:00") - new Date(t+"T00:00:00"))/864e5);
+      const wh = days === 0 ? "today" : days === 1 ? "tomorrow" : "on " + long(d);
+      why += "<br>" + n + " " + gbp(a) + " lands " + wh + ".";
+    }
+    note.innerHTML = why;
+
+    // PACE, the Monzo idea: how much of the money is left against how much of the
+    // cycle is left. Tells her she is running hot BEFORE the money is gone.
+    //
+    // ONLY MEANINGFUL ONCE THE CYCLE HAS STARTED. On the 8th, with the cycle
+    // beginning on payday, whatever was left over from LAST month was measured
+    // against THIS month's allowance and reported "£232.78 behind" - frightening,
+    // and about a month that had not begun.
+    pb.style.display = "";
+    if (D.cycleStart > t) {
+      document.getElementById("barFill").style.width = "0%";
+      document.getElementById("barMark").style.left = "0%";
+      document.getElementById("paceL").textContent = "cycle starts " + long(D.cycleStart);
+      const pr0 = document.getElementById("paceR");
+      pr0.textContent = gbp(Math.max(herNow + carry, 0)) + " to come";
+      pr0.className = "pos";
+    } else {
+    const s = new Date(D.cycleStart+"T00:00:00"), e2 = new Date(D.cycleEnd+"T00:00:00");
+    const nowD = new Date(t+"T00:00:00");
+    const totalDays = Math.round((e2-s)/864e5) + 1;
+    const gone = Math.min(Math.max(Math.round((nowD-s)/864e5), 0), totalDays);
+    const leftDays = Math.max(totalDays - gone, 0);
+    // The SAME number as the headline. Measuring against the raw rules figure
+    // while the headline showed the edited one put two different "your spare"
+    // values on one screen.
+    const herTotal = Math.max(herNow + carry, 0.01);
+    const spentPc = Math.min(Math.max(1 - Math.max(safe,0)/herTotal, 0), 1);
+    const timePc  = gone/totalDays;
+    document.getElementById("barFill").style.width = (spentPc*100).toFixed(1)+"%";
+    document.getElementById("barMark").style.left  = (timePc*100).toFixed(1)+"%";
+    const onTrack = herTotal * (1 - timePc);
+    const diff = Math.max(safe,0) - onTrack;
+    document.getElementById("paceL").textContent =
+      leftDays + (leftDays===1?" day":" days") + " left"
+      + (leftDays ? "  ·  " + gbp(Math.max(safe,0)/Math.max(leftDays,1)) + "/day" : "");
+    const pr = document.getElementById("paceR");
+    pr.textContent = leftDays===0 ? "cycle over"
+                   : diff >= 0 ? gbp(diff) + " ahead" : gbp(-diff) + " behind";
+    pr.className = leftDays===0 ? "" : diff >= 0 ? "pos" : "warnc";
+    }
+  }
+
+  // ---- upcoming list, tappable
+  const box = document.getElementById("upcoming");
+  box.innerHTML = "";
+  ev.forEach(e => {
+    const past = e.d < t;
+    const r = document.createElement("div");
+    r.className = "row" + (e.skip?" skip":"") + (e.edited?" amt":"")
+                + (e.moved?" moved":"") + (past?" past":"");
+    r.innerHTML = '<span class="k">' + nice(e.d) + "  " + e.n
+      + (e.moved?'<span class="tag">moved</span>':"")
+      + (e.extra?'<span class="tag">one-off</span>':"")
+      + (e.skip?'<span class="tag">skipped</span>':"") + "</span>"
+      + '<span class="v' + (e.orig>0?" pos":"") + '">'
+      + gbp(e.skip ? 0 : e.a) + "</span>";
+    r.onclick = () => openEditor(e.i, r);
+    box.appendChild(r);
+  });
+  // The add-a-one-off control lives under the list, rebuilt each render so it
+  // cannot get out of step with what is on screen.
+  // Rendered into a container that EXISTS in the markup, rather than reached
+  // for through box.parentNode. Traversing to a parent is the sort of thing
+  // that works in a browser and dies in a harness, and the whole point of the
+  // harness is that it runs what she runs.
+  const addWrap = document.getElementById("addBox");
+  addWrap.style.marginTop = "10px";
+  addWrap.innerHTML =
+    '<button id="addBtn" style="width:100%;background:#1c1526;border:1px dashed '
+    + '#4c2f6b;color:#c084fc;border-radius:12px;padding:12px;font-size:14px">'
+    + '+ Money in or out that is not a bill</button>'
+    + '<div id="addForm" style="display:none;background:var(--card2);'
+    + 'border-radius:14px;padding:13px;margin-top:8px">'
+    + '<div class="ed"><div class="b">'
+    + '<button id="dirIn" class="on">Money in</button>'
+    + '<button id="dirOut">Money out</button></div>'
+    + '<div class="f"><input id="xName" placeholder="what is it?" '
+    + 'style="flex:2"><input id="xAmt" inputmode="decimal" placeholder="0.00" '
+    + 'style="flex:1"></div>'
+    + '<div class="f" style="margin-top:7px">'
+    + '<input id="xDate" type="date" style="flex:2">'
+    + '<button id="xAdd" style="flex:1;background:var(--pop);color:#17101f;'
+    + 'font-weight:700;border:0">Add</button></div>'
+    + '<div class="note" id="xMsg">Only for money you have NOT had yet. If it is '
+    + 'already in the account, just update the balance at the top.</div>'
+    + '</div></div>';
+  let dir = 1;
+  const dIn = document.getElementById("dirIn"), dOut = document.getElementById("dirOut");
+  dIn.onclick  = () => { dir = 1;  dIn.className = "on"; dOut.className = ""; };
+  dOut.onclick = () => { dir = -1; dOut.className = "on"; dIn.className = ""; };
+  document.getElementById("addBtn").onclick = () => {
+    const f = document.getElementById("addForm");
+    f.style.display = f.style.display === "none" ? "" : "none";
+    if (f.style.display === "") document.getElementById("xDate").value = t;
+  };
+  document.getElementById("xAdd").onclick = () => {
+    const nm = (document.getElementById("xName").value || "").trim();
+    const amt = parseFloat(document.getElementById("xAmt").value);
+    const dt2 = document.getElementById("xDate").value;
+    const msg = document.getElementById("xMsg");
+    if (!nm) { msg.textContent = "Give it a name so you know what it was."; return; }
+    if (!isFinite(amt) || amt <= 0) { msg.textContent = "Put an amount in."; return; }
+    if (!dt2) { msg.textContent = "Pick a date."; return; }
+    if (dt2 < D.cycleStart || dt2 > D.cycleEnd) {
+      msg.textContent = "That date is outside this cycle (" + nice(D.cycleStart)
+                      + " to " + nice(D.cycleEnd) + ").";
+      return;
+    }
+    extras.push({d: dt2, a: dir * Math.abs(amt), n: nm});
+    save("extras", extras);
+    render();
+  };
+
+  const n = Object.keys(edits).length;
+  document.getElementById("changed").textContent = n
+    ? n + (n===1?" change":" changes") + " this cycle — they clear when the next one starts"
+    : "Something cancelled, moved or a different amount? Tap it.";
+  const nExtra = extras.filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd).length;
+  document.getElementById("sendBox").style.display = (n || nExtra) ? "" : "none";
+  save("edits", edits);
+}
+
+function removeExtra(i){
+  const j = parseInt(String(i).slice(1), 10);
+  extras.splice(j, 1);
+  save("extras", extras);
+  if (openRow) { openRow.remove(); openRow = null; }
+  render();
+}
+
+function openEditor(i, rowEl){
+  // A one-off is not a rule that behaved oddly, so it does not get the
+  // skip/move/amount editor - it gets removed.
+  if (String(i).charAt(0) === "x") {
+    if (openRow) { openRow.remove(); openRow = null; }
+    const b = document.createElement("div");
+    b.className = "ed";
+    b.innerHTML = '<div class="b"><button id="xDel">Remove this one-off</button></div>';
+    rowEl.parentNode.insertBefore(b, rowEl.nextSibling);
+    openRow = b;
+    document.getElementById("xDel").onclick = () => removeExtra(i);
+    return;
+  }
+  if (openRow) { openRow.remove(); const o = openRow; openRow = null;
+                 if (o.dataset.for == i) return; }
+  // LOOK THE EVENT UP BY ITS KEY. `i` is "date|name" now, and D.events is an
+  // Array - D.events["2026-09-09|Food"] is undefined, and the next line threw.
+  // That killed every skip, every amount change and every move, silently, and
+  // no test caught it because no test clicks a row.
+  const e = D.events.filter(function(x){ return editKey(x) === i; })[0];
+  if (!e) { return; }
+  const ed = edits[i] || {};
+  const box = document.createElement("div");
+  box.className = "ed"; box.dataset.for = i;
+  box.innerHTML =
+    '<div class="b">'
+    + '<button id="eSkip" class="' + (ed.skip?"on":"") + '">Didn\'t happen</button>'
+    + '<button id="eReset">Reset</button></div>'
+    + '<div class="f"><input id="eAmt" type="text" inputmode="decimal" placeholder="'
+    + Math.abs(e.a).toFixed(2) + '" value="' + (ed.amount!=null?ed.amount:"") + '">'
+    + '<input id="eDate" type="date" value="' + (ed.date || e.d) + '"></div>';
+  rowEl.after(box);
+  openRow = box;
+  box.onclick = ev2 => ev2.stopPropagation();
+  document.getElementById("eSkip").onclick = () => {
+    edits[i] = edits[i] || {}; edits[i].skip = !edits[i].skip;
+    if (!edits[i].skip && !edits[i].amount && !edits[i].date) delete edits[i];
+    box.remove(); openRow = null; render();
+  };
+  document.getElementById("eReset").onclick = () => {
+    delete edits[i]; box.remove(); openRow = null; render();
+  };
+  document.getElementById("eAmt").oninput = ev2 => {
+    const v = parseFloat(ev2.target.value.replace(/[^0-9.]/g,""));
+    edits[i] = edits[i] || {};
+    if (isNaN(v)) delete edits[i].amount; else edits[i].amount = v;
+    if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
+    render();
+  };
+  document.getElementById("eDate").onchange = ev2 => {
+    edits[i] = edits[i] || {};
+    if (ev2.target.value && ev2.target.value !== e.d) edits[i].date = ev2.target.value;
+    else delete edits[i].date;
+    if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
+    box.remove(); openRow = null; render();
+  };
+}
+
+// Changes Eden makes on the phone are EVIDENCE, not just this month's arithmetic.
+// A fortnightly bill cancelled three times running is a schedule change; a
+// utility at a new
+// price is permanent. She cannot tell which from inside one cycle and neither can
+// the app, so it hands the list to me and I decide whether bills.json moves.
+function changeText(){
+  const byKey = {};
+  D.events.forEach(function(e){ byKey[editKey(e)] = e; });
+  const lines = Object.entries(edits).map(([i, ed]) => {
+    const e = byKey[i] || D.events[i];
+    if (!e) return "- (an edit whose bill is no longer in this cycle)";
+    const bits = [];
+    if (ed.skip) bits.push("didn't happen");
+    if (ed.amount != null) bits.push("was " + gbp(Math.abs(e.a)) + ", actually " + gbp(ed.amount));
+    if (ed.date) bits.push("moved from " + nice(e.d) + " to " + nice(ed.date));
+    return "- " + e.n + " (" + nice(e.d) + "): " + bits.join(", ");
+  });
+  // One-offs go in their OWN section. They are facts about this month and imply
+  // nothing about the rules, so mixing them in with the edits would invite
+  // exactly the wrong conclusion - that a refund means bills.json should change.
+  const mine = extras
+    .filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd)
+    .map(x => "- " + x.n + " (" + nice(x.d) + "): "
+            + (x.a > 0 ? "money in " : "money out ") + gbp(Math.abs(x.a)));
+  let out = "Changes I made in the app, cycle " + D.cycleStart + " to "
+          + D.cycleEnd + ":\n" + (lines.length ? lines.join("\n") : "- none");
+  if (mine.length) {
+    out += "\n\nOne-offs I added (not bills, just this month):\n" + mine.join("\n");
+  }
+  return out + "\n\nAre any of these permanent?";
+}
+
+// Email, not clipboard. A copied blob only reaches me if Eden happens to be
+// connected to a session, and she has said that is not reliable. Her own mailbox
+// IS reliable, and fetch_mail.py already reads it - so this lands with me whether
+// or not she is talking to me at the time.
+document.getElementById("mailBtn").onclick = () => {
+  const subj = "Spare app changes - " + D.cycleStart;
+  location.href = "mailto:" + D.mailTo + "?subject=" + encodeURIComponent(subj)
+                + "&body=" + encodeURIComponent(changeText());
+};
+document.getElementById("copyBtn").onclick = () => {
+  const txt = changeText();
+  const done = () => {
+    const b = document.getElementById("copyBtn");
+    b.textContent = "copied";
+    setTimeout(() => { b.textContent = "or just copy it"; }, 2000);
+  };
+  if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, () => prompt("Copy this:", txt));
+  else prompt("Copy this:", txt);
+};
+
+const bal = document.getElementById("bal");
+const paid = document.getElementById("paidPartner");
+bal.addEventListener("input", () => {
+  save("bal", bal.value); save("balOn", today()); render();
+});
+paid.addEventListener("change", () => { save("paid", paid.checked); render(); });
+
+const sb = load("bal"); if (sb) bal.value = sb;
+paid.checked = !!load("paid");
+// READ AT RENDER TIME, NOT AT LOAD TIME. Captured once in a module-level
+// const, this held the PREVIOUS session's date for the whole session - so
+// typing a fresh balance produced a "this balance is from..." warning about a
+// number she had entered a second earlier, and a safe-to-spend figure that only
+// corrected itself on a reload.
+const on = load("balOn");
+// When this is still a browser tab, SAY what to do next. Eden installed it and
+// got an empty app, because a home-screen web app has its own storage and the
+// shortcut has to carry the setup code itself. The app is the only thing that
+// knows which of the two it is, so it is the right thing to say so.
+// SAY WHICH SETUP IS RUNNING. Eden asked "does it matter which QR I last
+// scanned, I can't remember" - and the honest answer was almost yes. A code
+// from the old format is rejected outright, so that case tells her. But a phone
+// still holding a pre-rules setup falls back to it rather than dying, and that
+// fallback set D.stale and then displayed NOTHING, so she would have been
+// looking at one frozen month forever with no way to tell.
+//
+// An app that cannot answer "am I up to date?" makes her the one who has to
+// remember, which is the whole thing this is meant to take off her.
+document.getElementById("foot").innerHTML =
+  (D.stale
+    ? '<div style="background:#2b1620;border:1px solid #7a3040;border-radius:14px;'
+      + 'padding:13px;margin-bottom:14px;color:#ffd9df;font-size:13px;'
+      + 'line-height:1.55;text-align:left">'
+      + '<b style="color:#ff7b72">This is an old setup</b><br>'
+      + 'These figures are frozen on ' + nice(D.cycleStart) + ' and will not '
+      + 'move on when the month does. Scan the QR on the laptop, copy the code '
+      + 'and paste it in - after that it works its own months out.</div>'
+    : "")
+  + (installed()
+    ? ""
+    : '<div style="background:#241a30;border:1px solid #4c2f6b;border-radius:14px;'
+      + 'padding:13px;margin-bottom:14px;color:#e9dcf5;font-size:13px;'
+      + 'line-height:1.55;text-align:left">'
+      + '<b style="color:#c084fc">Putting this on your home screen</b><br>'
+      + '1. Tap <b>Copy setup code</b> below.<br>'
+      + '2. Tap Share, then <b>Add to Home Screen</b>.<br>'
+      + '3. Open it from the new icon. It will ask for the code &mdash; tap '
+      + '<b>Paste</b>, then <b>Set up</b>.<br>'
+      + '<button id="copyCode" style="width:100%;margin-top:10px;background:#c084fc;'
+      + 'border:0;color:#17101f;border-radius:11px;padding:12px;font-size:14px;'
+      + 'font-weight:700">Copy setup code</button>'
+      + '<div style="margin-top:8px;color:#9b8aa8">An installed app cannot see '
+      + 'anything Safari saved, and it launches at a fixed address, so the code '
+      + 'has to travel by clipboard. It still never leaves your phone.</div></div>')
+  + (D.stale
+      ? "old-style setup &mdash; paste a new code"
+      : "setup code from " + nice(D.built) + " &middot; works its own months out")
+  + '<br><a href="#" id="updateLink" style="color:#7c6a89">update setup code</a>'
+  + (on && on !== today() ? "<br>balance you entered on " + long(on) : "");
+
+// Wire the copy button, if this is a browser tab. The code comes out of storage
+// rather than out of the address bar, because the address bar may already have
+// been cleared by a reload and she should not have to care which.
+const cc = document.getElementById("copyCode");
+if (cc) cc.addEventListener("click", () => {
+  let code = "";
+  try { code = localStorage.getItem("spare:code") || ""; } catch (e) {}
+  if (!code && location.hash.indexOf("#r=") === 0) code = location.hash.slice(3);
+  if (!code) { cc.textContent = "no code stored - scan the QR again"; return; }
+  // Refuse to hand over a code from an older format. spare:code survives a
+  // format change, so without this the button cheerfully copies something the
+  // app will then reject.
+  if (code.split("~").length !== 3 || code.split("~")[0].split(",").length !== 7) {
+    cc.textContent = "that stored code is out of date - rescan the QR";
+    return;
+  }
+  const done = () => {
+    cc.textContent = "copied - now Share, Add to Home Screen";
+    setTimeout(() => { cc.textContent = "Copy setup code"; }, 4000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code).then(done, () => prompt("Copy this:", code));
+  } else {
+    prompt("Copy this:", code);
+  }
+});
+
+render();
+
+// A WAY IN FOR A NEW CODE WHEN THE APP IS ALREADY SET UP. Without this the
+// paste box only ever appeared on an empty install, so "I have changed a bill,
+// paste the new code" had no second half - her only option was deleting the app.
+document.getElementById("updateLink").addEventListener("click", function (e) {
+  e.preventDefault();
+  const box = document.getElementById("updateBox");
+  if (box.innerHTML) { box.innerHTML = ""; return; }
+  box.innerHTML =
+    '<div style="background:var(--card2);border:1px solid var(--line);'
+    + 'border-radius:14px;padding:13px;margin-top:10px;text-align:left">'
+    + '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">Paste the '
+    + 'setup code Seph gave you. Your balance and any changes you have made this '
+    + 'month stay exactly as they are.</div>'
+    + '<textarea id="upIn" rows="3" placeholder="paste the setup code here" '
+    + 'style="width:100%;background:#120e18;border:1px solid var(--line);'
+    + 'color:var(--text);border-radius:11px;padding:10px;font-size:12px;'
+    + 'font-family:ui-monospace,monospace"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:8px">'
+    + '<button id="upPaste" style="flex:1;background:#1c1526;border:1px solid '
+    + 'var(--line);color:var(--text);border-radius:11px;padding:12px;'
+    + 'font-size:14px">Paste</button>'
+    + '<button id="upGo" style="flex:1;background:var(--pop);border:0;'
+    + 'color:#17101f;border-radius:11px;padding:12px;font-size:14px;'
+    + 'font-weight:700">Update</button></div>'
+    + '<div id="upMsg" style="font-size:13px;color:var(--bad);margin-top:8px">'
+    + '</div></div>';
+
+  const field = document.getElementById("upIn");
+  const msg = document.getElementById("upMsg");
+
+  document.getElementById("upPaste").onclick = function () {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function (t) { field.value = t; },
+        function () { msg.textContent = "Your phone would not hand over the "
+                                      + "clipboard - hold down in the box and "
+                                      + "tap Paste instead."; });
+    } else {
+      msg.textContent = "Hold down in the box above and tap Paste.";
+    }
+  };
+
+  document.getElementById("upGo").onclick = function () {
+    const raw = (field.value || "").trim();
+    if (!raw) { msg.textContent = "Nothing in the box yet."; return; }
+    const code = raw.indexOf("#r=") >= 0 ? raw.slice(raw.indexOf("#r=") + 3) : raw;
+    // Check it BEFORE storing it. Storing a bad code and reloading would drop
+    // her into an error on a page that had been working a second earlier.
+    try {
+      const parts = code.split("~");
+      if (parts.length !== 3 || parts[0].split(",").length !== 7) {
+        throw new Error(parts.length > 1 && parts[0].split(",").length > 10
+          ? "that is an old-style code - scan the new QR"
+          : "that code looks cut short - copy the whole thing");
+      }
+      localStorage.setItem("spare:pending", code);
+      location.reload();
+    } catch (err) {
+      msg.textContent = err.message || String(err);
+    }
+  };
+});
+</script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');</script>
+</body></html>
