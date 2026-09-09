@@ -70,7 +70,14 @@
                border-radius:11px;padding:11px;font-size:15px;min-width:0}
   .foot{text-align:center;color:#5b4d69;font-size:11px;margin-top:16px;line-height:1.6}
   .chk{width:26px;height:26px;margin:0;accent-color:var(--pop)}
-</style></head><body>
+</style>
+<!-- PERMANENT, not injected. These lived in make_pwa.py and were
+     stripped by every build_app.py run that was not followed by
+     one - which is what the README told anyone to do. A build step
+     that can be skipped is a build step that will be. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+</head><body>
 
 <div class="top"><h1>Spare</h1><span class="day" id="cycle"></span></div>
 
@@ -2272,4 +2279,13 @@ document.getElementById("updateLink").addEventListener("click", function (e) {
     }
   };
 });
-</script></body></html>
+</script>
+<script>
+// GUARDED ON https, because the same template also builds the local
+// spare.html that Eden opens over file:// - and registering a worker
+// there throws. One template, two builds, one condition.
+if (location.protocol === "https:" && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js");
+}
+</script>
+</body></html>
