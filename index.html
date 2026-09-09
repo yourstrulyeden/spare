@@ -99,6 +99,11 @@
 
 <div class="card">
   <div class="row" id="carryRow"><span class="k">Carried over from last month<br><small style="opacity:.6">yours, and not spent on bills</small></span><span class="v pos" id="carry"></span></div>
+  <div class="ed" id="carryEdit" style="display:none">
+    <div class="f"><input id="cAmt" type="text" inputmode="decimal"
+      placeholder="0.00"><button id="cSave">Save</button></div>
+    <div class="note" id="cMsg"></div>
+  </div>
   <div class="row big"><span class="k">Your spare this month</span><span class="v" id="herSpare"></span></div>
   <div class="row big"><span class="k"><span id="partnerName2"></span>'s spare</span><span class="v" id="hisSpare"></span></div>
   <div class="row"><span class="k">Bills to split<br><small style="opacity:.6">your share of the rent only</small></span><span class="v" id="bills"></span></div>
@@ -301,8 +306,23 @@ function buildModel(R, todayISO){
   const inA = ev.filter(function(e){ return e.n === nameA; })[0];
   const inB = ev.filter(function(e){ return e.n === nameB; })[0];
 
+  // WHO A CORRECTION BELONGS TO. `owner` maps an income NAME to e/a/j, and
+  // herJoint/hisJoint are what each of them draws from the JOINT lines only -
+  // her own lines are taken out first, because a joint delta must not be split
+  // in a ratio that has either person's sole income baked into it.
+  const owner = {};
+  let herOwn = 0, hisOwn = 0;
+  R.income.forEach(function(it){
+    const t = it.t || "j";
+    owner[it.n] = t;
+    if (t === "e") herOwn += it.a;
+    else if (t === "a") hisOwn += it.a;
+  });
+
   return {
     hers: R.hers, his: R.his, bills: bills,
+    owner: owner,
+    herJoint: R.hers - herOwn, hisJoint: R.his - hisOwn,
     herSpare: Math.round(spare * R.hers / pot * 100)/100,
     hisSpare: Math.round(spare * R.his  / pot * 100)/100,
     cycleStart: ymd(a), cycleEnd: ymd(b),
@@ -355,6 +375,39 @@ function installed(){
   const oops = (where, e) => alert("Setup failed (" + where + "): "
                                    + (e && e.message ? e.message : e));
 
+  // ------------------------------------------------------------- THE KEY
+  // A KEY, NOT RULES. With this in storage the app fetches its own rules from
+  // the site and decrypts them, so a bill change never needs a new QR again.
+  // Same fragment trick as the rules: a fragment is never sent to the server,
+  // so the key reaches the phone through the camera and nothing else sees it.
+  let keyIn = null;
+  if (frag.indexOf("#k=") === 0) {
+    try { keyIn = decodeURIComponent(frag.slice(3)); } catch (e) {}
+  }
+  try {
+    const pk = localStorage.getItem("spare:pendingkey");
+    if (!keyIn && pk) { keyIn = pk; }
+    if (keyIn) localStorage.removeItem("spare:pendingkey");
+  } catch (e) {}
+  if (keyIn) {
+    // SHAPE-CHECKED before it is stored. A mistyped key is indistinguishable
+    // from a working one until the fetch silently fails and the app goes on
+    // showing month-old rules forever - which is the failure this whole feature
+    // exists to end, wearing a different hat.
+    if (/^[A-Za-z0-9_-]{42,44}$/.test(keyIn)) {
+      try { localStorage.setItem("spare:key", keyIn); } catch (e) {}
+      // Off the address bar at once, so it is not in history or a screenshot.
+      try {
+        history.replaceState(null, "", location.pathname + location.search);
+      } catch (e) {}
+      frag = "";
+    } else {
+      alert("That setup code does not look like a key. Copy the whole thing "
+            + "and try again.");
+    }
+  }
+
+
   const readRules = payload => {
     // VALIDATE. A damaged code that decodes into a plausible-looking budget is
     // far worse than one that refuses: a test tore a single separator out and
@@ -381,13 +434,22 @@ function installed(){
       if (!isFinite(+f[i])) throw new Error("field " + (i+1) + " is not a number.");
     }
     const rows = (chunk, what) => {
+      // INCOME ROWS MAY CARRY A 5TH FIELD, `to` - whose money a correction on
+      // that line belongs to. Bills never do. An older code with no 5th field
+      // still reads: every income line falls back to "j" (joint), which is what
+      // the app assumed before the field existed, so an old code behaves
+      // exactly as it did rather than being refused.
+      const wide = what === "income";
       const got = (chunk ? chunk.split(";") : []).map(r => {
         const p = r.split(",");
-        if (p.length !== 4) {
-          throw new Error("a " + what + " line has " + p.length + " fields, not 4.");
+        if (p.length !== 4 && !(wide && p.length === 5)) {
+          throw new Error("a " + what + " line has " + p.length + " fields, not "
+                        + (wide ? "4 or 5" : "4") + ".");
         }
         if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
-        return {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
+        const row = {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
+        if (wide) row.t = p[4] || "j";
+        return row;
       });
       if (!got.length) throw new Error("there are no " + what + " lines in this code.");
       return got;
@@ -422,8 +484,19 @@ function installed(){
   if (frag.indexOf("#r=") === 0) {
     try {
       const raw = decodeURIComponent(frag.slice(3));
+      // VALIDATE FIRST, THEN STORE. This wrote spare:code BEFORE readRules
+      // could reject it, so pasting a damaged code destroyed the good one -
+      // and the Copy button then handed the damaged one to the installed app,
+      // which is the one place a bad code cannot be recovered from.
+      const parsed = readRules(raw);
       try { localStorage.setItem("spare:code", raw); } catch (e) {}
-      finish(readRules(raw));
+      // AND CONSUME ANY PENDING CODE. It was only cleared when there was NO
+      // fragment, so scanning a fresh QR left an older pasted code sitting
+      // there to be picked up on the next load and silently revert the newer
+      // rules. A code that has been superseded is spent, whichever door the
+      // replacement came through.
+      try { localStorage.removeItem("spare:pending"); } catch (e) {}
+      finish(parsed);
     } catch (e) { oops("setup code", e); }
   }
 
@@ -544,10 +617,47 @@ function today(){
     return new Date().toISOString().slice(0,10);
   }
 }
+// SHE NAMES HER OWN ONE-OFFS, so this is not about an attacker - it is about
+// "Rosie's <vet> & meds" losing half of itself on the way into a row. The email
+// is plain text and is deliberately NOT escaped; only the HTML is.
+const esc = s => String(s == null ? "" : s)
+  .split("&").join("&amp;").split("<").join("&lt;").split(">").join("&gt;")
+  .split('"').join("&quot;");
 const nice  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
               {day:"numeric", month:"short"});
 const long  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
               {day:"numeric", month:"long"});
+
+// SWEEP OLD CYCLES. Five keys per cycle were being written and none ever
+// removed, so the store grew forever and every stale cycle's edits sat there
+// being findable. The PREVIOUS cycle is kept deliberately - carry-over is
+// computed from it, so it is not litter yet - and anything older goes.
+(function sweep(){
+  try {
+    const keep = {};
+    keep[K] = 1;
+    // NOT toISOString. This is the THIRD time the same trap has been walked
+    // into in this project: toISOString is UTC, and a local midnight in British
+    // Summer Time is 23:00 the PREVIOUS day in UTC - so the previous cycle's
+    // key came out a day early, matched nothing, and the sweep deleted the one
+    // month it was written to keep. Built from the local parts instead.
+    const start = new Date(D.cycleStart + "T00:00:00");
+    start.setMonth(start.getMonth() - 1);
+    const pad = n => (n < 10 ? "0" : "") + n;
+    keep["spare:" + start.getFullYear() + "-" + pad(start.getMonth() + 1)
+         + "-" + pad(start.getDate())] = 1;
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      // Only OUR per-cycle keys: spare:YYYY-MM-DD:something. The unscoped ones
+      // (spare:rules, spare:code, spare:pending) must survive - they are how a
+      // device stays set up.
+      const m = k && k.match(/^(spare:\d{4}-\d{2}-\d{2}):/);
+      if (m && !keep[m[1]]) doomed.push(k);
+    }
+    doomed.forEach(function(k){ localStorage.removeItem(k); });
+  } catch (e) { /* storage unavailable; nothing to sweep */ }
+})();
 
 const load = k => { try { return JSON.parse(localStorage.getItem(K+":"+k)) } catch(e){ return null } };
 const save = (k,v) => localStorage.setItem(K+":"+k, JSON.stringify(v));
@@ -577,6 +687,11 @@ let extras = load("extras") || [];
   try { save("edits", edits); } catch (err) {}
 })();
 let openRow = null;
+// WHICH event the open editor belongs to. Needed because render() rebuilds the
+// list and throws the editor away with it; without the key there is nothing to
+// reopen it from, and an editor that vanishes when she touches anything else
+// is indistinguishable from one that is broken.
+let openKey = null;
 
 // AN EDIT IS KEYED BY WHAT IT IS, NOT WHERE IT SITS. Keying by position meant
 // the list changing shape at payday silently moved every edit onto a different
@@ -616,10 +731,46 @@ function eventsNow(){
     .sort((a,b) => a.d < b.d ? -1 : a.d > b.d ? 1 : b.a - a.a);
 }
 
-function render(){
+// keepList: leave the #upcoming rows exactly as they are and update only the
+// figures. Passed while she is TYPING in the amount box - rebuilding the list
+// mid-keystroke destroyed the input she was typing into, closed the phone
+// keyboard and saved one digit.
+// ONE PARSER FOR EVERY AMOUNT BOX. There were three, and they agreed on
+// nothing: the row editor stripped the minus so -20 was recorded as +20, the
+// one-off form answered a negative with "Put an amount in." (which is not what
+// is wrong with it), and the balance box kept the minus but truncated at a
+// second dot. All three silently produced a number she had not typed, and the
+// email that reaches me then reported that number as though she had.
+//
+// Returns {v, msg}. A non-empty msg means REFUSED - never a quietly repaired
+// value, because a repaired value is indistinguishable from an accepted one.
+function readAmount(txt, allowNegative){
+  const s = String(txt == null ? "" : txt).trim();
+  if (s === "") return {v: null, msg: ""};
+  if (s.indexOf("-") >= 0 && !allowNegative) {
+    return {v: null,
+            msg: "Amounts here are always positive - put in what it actually was."};
+  }
+  const body = s.charAt(0) === "-" ? s.slice(1) : s;
+  if (body.indexOf("-") >= 0) return {v: null, msg: "Numbers only."};
+  if ((body.match(/\./g) || []).length > 1) {
+    return {v: null, msg: "That has two decimal points in it."};
+  }
+  if (body === "" || body === "." || !/^[0-9]*\.?[0-9]*$/.test(body)) {
+    return {v: null, msg: "Numbers only."};
+  }
+  const v = parseFloat(s);
+  if (!isFinite(v)) return {v: null, msg: "Numbers only."};
+  return {v: v, msg: ""};
+}
+
+function render(keepList){
   const t = today();
-  const raw = document.getElementById("bal").value.replace(/[^0-9.\-]/g,"");
-  const bal = raw === "" ? null : parseFloat(raw);
+  // THE BALANCE GOES THROUGH THE SAME PARSER. A negative IS allowed here and
+  // only here - an overdraft is a real thing to be told - but "12.34.56" used
+  // to become 12.34 in silence and then drive every figure on the screen.
+  const balRead = readAmount(document.getElementById("bal").value, true);
+  const bal = balRead.v;
   const ev = eventsNow();
 
   // THE TOTALS FOLLOW THE EDITS. Read off the rules alone, they ignored every
@@ -652,10 +803,64 @@ function render(){
   });
   billsNow = Math.round(billsNow * 100) / 100;
 
-  const potNow = D.hers + D.his;
+  // AN INCOME CORRECTION MOVES THE POT. It did not, and that was the worst of
+  // the money bugs: the pot was `D.hers + D.his`, read off the rules once and
+  // never touched again, so telling the app an income landed short moved the
+  // ROW and "still to come in" and left both spares and his share exactly
+  // where they were. The same gesture on a BILL moved the bill total by
+  // exactly the bill. One editor, two behaviours, and both look accepted.
+  //
+  // It errs in the bad direction. 79.60 less income left her spare 47.61
+  // overstated - money the app said she could spend and she has not got.
+  //
+  // A DELTA, not a recompute: with no edits this is byte-identical to the old
+  // line. Whose delta it is comes off `owner`, because the numbers alone
+  // cannot say - a joint payment can be made of parts belonging to each of
+  // them in different proportions, plus a part that is neither's.
+  let herIn = D.hers, hisIn = D.his;
+  const jointTot = (D.herJoint || 0) + (D.hisJoint || 0);
+  ev.forEach(function(e){
+    // Income only. One-offs are excluded for the same reason they are excluded
+    // from the bill total: a refund is not a change to what either of them
+    // earns, it already moves safe-to-spend, and counting it would quietly
+    // re-split the whole month's bills over it.
+    if (e.extra || !(e.orig > 0)) return;
+    // The same window rule as the bills above. An income moved OUT of the
+    // cycle is finding 4's shape - the total drops with no warning - and is
+    // pinned as that rather than half-fixed here.
+    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    const delta = e.a - e.orig;
+    if (!delta) return;
+    const own = (D.owner || {})[e.n] || "j";
+    if (own === "e") { herIn += delta; }
+    else if (own === "a") { hisIn += delta; }
+    else if (jointTot > 0) {
+      herIn += delta * D.herJoint / jointTot;
+      hisIn += delta * D.hisJoint / jointTot;
+    }
+  });
+  const potNow = herIn + hisIn;
   const spareNow = potNow - billsNow;
-  const herNow = Math.round(spareNow * D.hers / potNow * 100) / 100;
-  const hisNow = Math.round(spareNow * D.his / potNow * 100) / 100;
+  // THE BILL SHARE STAYS ON THE AGREED RATIO. Re-deriving it from the corrected
+  // pot made one person's shortfall move the OTHER person's spare - telling the
+  // app her own payment came in short cut his spending money too, because a
+  // smaller income for her means a smaller share of the bills for her. That is
+  // consistent arithmetic and the wrong model: the ratio is a standing
+  // arrangement, not something a single late payment renegotiates, and the
+  // email that goes out mentions only her payment. Same reasoning as the rent
+  // split - the unshared part is fixed, so an amount that is not theirs never
+  // scales their share.
+  //
+  // With no edits this is ALGEBRAICALLY THE OLD LINE, which is why it is safe:
+  //   spare * hers/pot == (pot - bills) * hers/pot == hers - bills*hers/pot
+  const agreed = D.hers + D.his;
+  // GUARD THE DIVISION. A rules payload with no income in it would otherwise
+  // render NaN across every figure on the page, which is worse than a wrong
+  // number because she cannot tell what it means.
+  const herShare = agreed > 0 ? D.hers / agreed : 0;
+  const hisShare = agreed > 0 ? D.his / agreed : 0;
+  const herNow = Math.round((herIn - billsNow * herShare) * 100) / 100;
+  const hisNow = Math.round((hisIn - billsNow * hisShare) * 100) / 100;
 
   // EVERYTHING AHEAD IS MEASURED FROM THE DAY THE BALANCE WAS TAKEN, not from
   // today. The balance she typed already contains everything that had happened
@@ -676,6 +881,17 @@ function render(){
   // when the payment is inside the balance she typed.
   const incomeLanded = D.inADate <= anchor;
   const paid = document.getElementById("paidPartner").checked;
+  // WHEN she ticked it. The tick is right - his share stops being hers to
+  // spend - but the balance she typed still HAS his money in it, so without
+  // this the same money is counted in her favour twice. Comparing the two dates
+  // means the prompt appears only while it is true and disappears the moment
+  // she updates the balance, rather than nagging forever.
+  // ORDER, NOT DATES. The two events are minutes apart on the same afternoon,
+  // so comparing days could never separate them - and the same-day case is the
+  // only one that happens. The tick raises this flag; touching the balance
+  // lowers it. That IS the question: has she re-read the balance since the
+  // money left?
+  const balAfterPaying = !paid || !load("balStale");
   // NEVER HOLD BACK A NEGATIVE. If bills exceed the pot his share goes negative,
   // and subtracting a negative ADDS it - one mistyped amount turned an overdraft
   // into 642 of extra "safe to spend". A share that does not exist is zero.
@@ -694,9 +910,82 @@ function render(){
   // of the ratio and charge her MORE bills for having underspent, which is a
   // budget that punishes care. It is hers alone: the partner's share is transferred to
   // him each cycle, so whatever is still in her account at the end is her own.
-  const carry = D.carryover || 0;
-  document.getElementById("carryRow").style.display = carry > 0 ? "" : "none";
-  document.getElementById("carry").textContent = "+" + gbp(carry);
+  // ---- CARRY-OVER ----------------------------------------------------
+  // The baked figure belongs to the cycle it was MEASURED for. Past that it is
+  // somebody else's month, and using it means showing a confident wrong number
+  // with no way to notice.
+  const builtCycle = ymd(currentCycle(new Date((D.built || D.cycleStart)
+                                               + "T00:00:00Z"))[0]);
+  const bakedIsOurs = D.cycleStart <= builtCycle;
+  // THE PREVIOUS CYCLE'S KEY. NOT currentCycle(cycleStart - 1 day): that reads
+  // the month off the date it is given and returns the cycle whose payday falls
+  // in it, so the day before payday resolves to the cycle that is ABOUT to
+  // start - the same one - and the lookup found nothing every time. Step back a
+  // calendar month and ask for that month's payday instead. The weekend shift
+  // never moves a payday more than two days, so it cannot cross a month end.
+  const prevStart = (function(){
+    const p = D.cycleStart.split("-");
+    let y = +p[0], m = +p[1] - 1;
+    if (m < 1) { m = 12; y--; }
+    return ymd(paydayFor(y, m));
+  })();
+  let carrySrc = "";
+  let carry;
+  const mine = load("carry");
+  if (typeof mine === "number") {
+    carry = mine;
+    carrySrc = load("carryFrom") || "you set this";
+  } else if (bakedIsOurs) {
+    carry = D.carryover || 0;
+    carrySrc = "measured for this cycle";
+  } else {
+    let prev = null, prevOn = null;
+    try {
+      prev = JSON.parse(localStorage.getItem("spare:" + prevStart + ":leftover"));
+      prevOn = JSON.parse(localStorage.getItem("spare:" + prevStart + ":balOn"));
+    } catch (e) {}
+    if (typeof prev === "number") {
+      carry = Math.round(prev * 100) / 100;
+      carrySrc = "from what was left on " + (prevOn ? long(prevOn) : "your last check");
+      // FROZEN. A carry-over that moves on every render is not a carry-over,
+      // and she would watch last month's leftover drift as she typed today's
+      // balance.
+      save("carry", carry);
+      save("carryFrom", carrySrc);
+    } else {
+      carry = 0;
+      carrySrc = "";
+    }
+  }
+  const carryUnset = !bakedIsOurs && typeof mine !== "number" && !carrySrc;
+  // SHOWN WHENEVER IT IS NOT ZERO. It used to appear only when POSITIVE, while
+  // `herSpare` added it unconditionally - so an overspend carried from last
+  // month came off her spare with nothing on the screen saying why, and the
+  // only way to find the missing money was to know the number already.
+  const cr = document.getElementById("carryRow");
+  cr.style.display = carry !== 0 ? "" : "none";
+  const cv = document.getElementById("carry");
+  cv.textContent = (carry > 0 ? "+" : "") + gbp(carry);
+  cv.className = carry < 0 ? "v warnc" : "v pos";
+  // SHOWN EVEN AT ZERO once the baked figure has expired, because "nothing has
+  // been carried over" and "the app has not worked it out" look identical on a
+  // hidden row - and the second one is the bug.
+  cr.style.display = (carry !== 0 || carryUnset) ? "" : "none";
+  const ck = cr.querySelector(".k");
+  if (ck) {
+    const sub = carryUnset
+      ? "not worked out yet - tap to set it"
+      : (carrySrc || "yours, and not spent on bills");
+    ck.innerHTML = (carry < 0 ? "Overspent last month" : "Carried over from last month")
+      + '<br><small style="opacity:.6">' + esc(sub) + " &middot; tap to change</small>";
+  }
+  if (carryUnset) cv.textContent = "—";
+  cr.onclick = () => {
+    const box = document.getElementById("carryEdit");
+    const open = box.style.display === "none";
+    box.style.display = open ? "" : "none";
+    if (open) document.getElementById("cAmt").value = carry ? String(carry) : "";
+  };
 
   document.getElementById("herSpare").textContent = gbp(herNow + carry);
   document.getElementById("hisSpare").textContent = gbp(hisNow);
@@ -709,7 +998,10 @@ function render(){
 
   if (bal === null || isNaN(bal)) {
     el.textContent = "—"; el.className = "n";
-    note.textContent = "Enter your balance above";
+    // SAY WHY, when there is a why. "Enter your balance above" in response to
+    // something she has just typed reads as though the app did not see it.
+    note.textContent = balRead.msg || "Enter your balance above";
+    note.className = balRead.msg ? "s warnc" : "s";
     pb.style.display = "none";
   } else {
     // Cap by BOTH today's balance and the lowest point ahead. You cannot spend
@@ -717,6 +1009,10 @@ function render(){
     let run = bal, low = bal, lowOn = t;
     for (const e of future) { run += e.a; if (run < low) { low = run; lowOn = e.d; } }
     const safe = Math.min(bal, low) - owedPartner;
+    // WHAT NEXT MONTH WILL CARRY. Saved UNCLAMPED - an overspend rolls forward
+    // too, and hiding that is how a negative carry-over came to be deducted
+    // with nothing on screen saying why.
+    try { save("leftover", Math.round(safe * 100) / 100); } catch (e) {}
     el.textContent = gbp(Math.max(safe, 0));
     // A BALANCE FROM A PREVIOUS DAY CANNOT BE PROJECTED HONESTLY. Everything
     // she has spent since is invisible, so the figure can only ever be too
@@ -739,6 +1035,14 @@ function render(){
     // won and the warning never appeared at all. A warning that only shows when
     // nothing else needs saying is not a warning - and this one is about a
     // figure that can only ever be too high.
+    // THE SAME SHAPE AS THE STALE WARNING and for the same reason: a figure
+    // that can only be too high, with nothing on screen admitting it.
+    if (!balAfterPaying) {
+      why = "⚠ you have marked " + P + "'s share as sent, but this balance is "
+          + "from before that. Update it above so it does not get counted "
+          + "twice. " + why;
+      note.className = "s warnc";
+    }
     if (stale) {
       why = "⚠ this balance is from " + long(anchor)
           + " — anything you have spent since is not in it. Update it above. "
@@ -747,18 +1051,35 @@ function render(){
     // What is landing NEXT matters more than what is landing in a fortnight.
     // With almost nothing in the account the useful sentence names the payment
     // arriving TOMORROW, not the one a fortnight out - so the nearer one wins.
-    const soon = [];
-    const lbl = (d, f) => ((D.events || []).find(e => e.d === d && e.a > 0)
-                       || {}).n || f;
-    if (D.inADate >= t)  soon.push([lbl(D.inADate, "Income"),
-                                   D.inAAmount, D.inADate]);
-    if (D.inBDate >= t) soon.push([lbl(D.inBDate, "Income"),
-                                   D.inBAmount, D.inBDate]);
-    soon.sort((a,b) => a[2] < b[2] ? -1 : 1);
-    for (const [n,a,d] of soon) {
-      const days = Math.round((new Date(d+"T00:00:00") - new Date(t+"T00:00:00"))/864e5);
-      const wh = days === 0 ? "today" : days === 1 ? "tomorrow" : "on " + long(d);
-      why += "<br>" + n + " " + gbp(a) + " lands " + wh + ".";
+    // BUILT FROM THE EVENTS, NOT FROM D.inADate/D.inBDate. Those are the FIRST
+    // occurrence of each income line, so a four-weekly payment landing twice in
+    // one cycle had its second one announced nowhere at all.
+    //
+    // AND MEASURED AGAINST THE ANCHOR, NOT AGAINST TODAY. This said `>= t`
+    // while the arithmetic used `> anchor`, so on payday the note said the
+    // money "lands today" whilst "still to come in" excluded it and the
+    // holdback fired as though it had arrived - three answers about the same
+    // payment, on the one day of the month it matters most.
+    const soon = ev.filter(e => e.a > 0 && !e.extra && !e.skip
+                                && e.d >= anchor
+                                && e.d >= D.cycleStart && e.d <= D.cycleEnd)
+                   .sort((a,b) => a.d < b.d ? -1 : 1);
+    for (const e of soon) {
+      const days = Math.round((new Date(e.d+"T00:00:00") - new Date(t+"T00:00:00"))/864e5);
+      if (e.d > anchor) {
+        const wh = days === 0 ? "today" : days === 1 ? "tomorrow" : "on " + long(e.d);
+        why += "<br>" + e.n + " " + gbp(e.a) + " lands " + wh + ".";
+      } else {
+        // DATED ON THE ANCHOR DAY, so every figure above already counts it as
+        // arrived. That is a GUESS - she may have read her balance before it
+        // landed - and it is the largest guess the app makes. State it, so she
+        // can correct it, rather than describing the money as still coming
+        // while quietly spending it.
+        why += "<br>" + e.n + " " + gbp(e.a) + " was due "
+             + (days === 0 ? "today" : long(e.d))
+             + ", and everything above assumes it is already in that balance. "
+             + "If it has not landed yet, update the balance when it does.";
+      }
     }
     note.innerHTML = why;
 
@@ -797,22 +1118,37 @@ function render(){
       leftDays + (leftDays===1?" day":" days") + " left"
       + (leftDays ? "  ·  " + gbp(Math.max(safe,0)/Math.max(leftDays,1)) + "/day" : "");
     const pr = document.getElementById("paceR");
+    // UNDER WATER, REPORT THE SHORTFALL. `spentPc` divides Math.max(safe,0) by
+    // the budget, so once the projection goes negative the bar pins to 100% and
+    // this printed the SAME "behind" figure for every balance she could have -
+    // 0 and 300 were indistinguishable on screen. The difference was never
+    // missing, only discarded: `safe` before clamping is a different number in
+    // each case, and it is the one she can act on.
     pr.textContent = leftDays===0 ? "cycle over"
+                   : safe < 0 ? gbp(-safe) + " short"
                    : diff >= 0 ? gbp(diff) + " ahead" : gbp(-diff) + " behind";
-    pr.className = leftDays===0 ? "" : diff >= 0 ? "pos" : "warnc";
+    pr.className = leftDays===0 ? "" : (safe < 0 || diff < 0) ? "warnc" : "pos";
     }
   }
 
   // ---- upcoming list, tappable
   const box = document.getElementById("upcoming");
+  if (!keepList) {
   box.innerHTML = "";
   ev.forEach(e => {
     const past = e.d < t;
+    // OUT OF THIS CYCLE. A date move is allowed to push a bill into a later
+    // month - that is a true thing to tell the app and the total is right to
+    // drop it. What was wrong is that it happened in silence while the row
+    // still read as a live cost, so it is tagged instead.
+    const gone = e.moved && (e.d < D.cycleStart || e.d > D.cycleEnd);
     const r = document.createElement("div");
     r.className = "row" + (e.skip?" skip":"") + (e.edited?" amt":"")
-                + (e.moved?" moved":"") + (past?" past":"");
-    r.innerHTML = '<span class="k">' + nice(e.d) + "  " + e.n
-      + (e.moved?'<span class="tag">moved</span>':"")
+                + (e.moved?" moved":"") + (gone?" skip":"") + (past?" past":"");
+    r.dataset.key = e.i;
+    r.innerHTML = '<span class="k">' + nice(e.d) + "  " + esc(e.n)
+      + (gone?'<span class="tag">not this cycle</span>'
+             :(e.moved?'<span class="tag">moved</span>':""))
       + (e.extra?'<span class="tag">one-off</span>':"")
       + (e.skip?'<span class="tag">skipped</span>':"") + "</span>"
       + '<span class="v' + (e.orig>0?" pos":"") + '">'
@@ -820,6 +1156,17 @@ function render(){
     r.onclick = () => openEditor(e.i, r);
     box.appendChild(r);
   });
+  // REOPEN WHAT THE REBUILD JUST DESTROYED. Without this, ticking the partner
+  // box or retyping the balance silently closed an editor she was using, and
+  // left `openRow` pointing at a detached node so the next tap did nothing.
+  if (openKey != null) {
+    const want = openKey;
+    const row = Array.prototype.filter.call(box.children,
+                  function(c){ return c.dataset && c.dataset.key === want; })[0];
+    openRow = null; openKey = null;
+    if (row) openEditor(want, row, true);
+  }
+  }
   // The add-a-one-off control lives under the list, rebuilt each render so it
   // cannot get out of step with what is on screen.
   // Rendered into a container that EXISTS in the markup, rather than reached
@@ -854,19 +1201,45 @@ function render(){
   document.getElementById("addBtn").onclick = () => {
     const f = document.getElementById("addForm");
     f.style.display = f.style.display === "none" ? "" : "none";
-    if (f.style.display === "") document.getElementById("xDate").value = t;
+    // PREFILL THE FIRST DATE THAT WORKS. It used to prefill today and then
+    // refuse its own prefill for the eight days before payday, so the button
+    // did nothing but argue with her for a quarter of every month.
+    if (f.style.display === "") {
+      document.getElementById("xDate").value =
+        t < D.cycleStart ? D.cycleStart : t > D.cycleEnd ? D.cycleEnd : t;
+    }
   };
   document.getElementById("xAdd").onclick = () => {
     const nm = (document.getElementById("xName").value || "").trim();
-    const amt = parseFloat(document.getElementById("xAmt").value);
+    // SAME PARSER. This used to accept 12.34.56 as 12.34 without a word, and
+    // to answer a NEGATIVE with "Put an amount in." - which sends her looking
+    // for an empty box when the box is full and the sign is the problem. The
+    // direction is chosen with the Money in / Money out buttons, so a minus
+    // here is a real misunderstanding worth naming.
+    const got = readAmount(document.getElementById("xAmt").value, false);
+    const amt = got.v;
     const dt2 = document.getElementById("xDate").value;
     const msg = document.getElementById("xMsg");
     if (!nm) { msg.textContent = "Give it a name so you know what it was."; return; }
-    if (!isFinite(amt) || amt <= 0) { msg.textContent = "Put an amount in."; return; }
+    if (got.msg) {
+      msg.textContent = got.msg
+        + (got.msg.indexOf("positive") >= 0
+           ? " Use Money in / Money out above to say which way it went." : "");
+      return;
+    }
+    if (amt === null || !isFinite(amt) || amt <= 0) {
+      msg.textContent = "Put an amount in."; return;
+    }
     if (!dt2) { msg.textContent = "Pick a date."; return; }
     if (dt2 < D.cycleStart || dt2 > D.cycleEnd) {
-      msg.textContent = "That date is outside this cycle (" + nice(D.cycleStart)
-                      + " to " + nice(D.cycleEnd) + ").";
+      // SAY WHICH SIDE, because the two mean different things. Before payday
+      // is money belonging to the cycle that is ENDING; after is next month's
+      // problem. "Outside this cycle" alone leaves her guessing which.
+      msg.textContent = dt2 < D.cycleStart
+        ? "That is before payday, so it belongs to the month that is ending - "
+          + "this cycle starts " + nice(D.cycleStart) + "."
+        : "That is after " + nice(D.cycleEnd) + ", so it lands in next month's "
+          + "cycle rather than this one.";
       return;
     }
     extras.push({d: dt2, a: dir * Math.abs(amt), n: nm});
@@ -891,7 +1264,9 @@ function removeExtra(i){
   render();
 }
 
-function openEditor(i, rowEl){
+// force: skip the tap-again-to-close toggle. Used when render() is putting
+// back an editor it destroyed, where a "second tap" never happened.
+function openEditor(i, rowEl, force){
   // A one-off is not a rule that behaved oddly, so it does not get the
   // skip/move/amount editor - it gets removed.
   if (String(i).charAt(0) === "x") {
@@ -900,12 +1275,13 @@ function openEditor(i, rowEl){
     b.className = "ed";
     b.innerHTML = '<div class="b"><button id="xDel">Remove this one-off</button></div>';
     rowEl.parentNode.insertBefore(b, rowEl.nextSibling);
-    openRow = b;
+    openRow = b; openKey = null;
     document.getElementById("xDel").onclick = () => removeExtra(i);
     return;
   }
   if (openRow) { openRow.remove(); const o = openRow; openRow = null;
-                 if (o.dataset.for == i) return; }
+                 openKey = null;
+                 if (!force && o.dataset.for == i) return; }
   // LOOK THE EVENT UP BY ITS KEY. `i` is "date|name" now, and D.events is an
   // Array - D.events["2026-09-09|Food"] is undefined, and the next line threw.
   // That killed every skip, every amount change and every move, silently, and
@@ -921,31 +1297,72 @@ function openEditor(i, rowEl){
     + '<button id="eReset">Reset</button></div>'
     + '<div class="f"><input id="eAmt" type="text" inputmode="decimal" placeholder="'
     + Math.abs(e.a).toFixed(2) + '" value="' + (ed.amount!=null?ed.amount:"") + '">'
-    + '<input id="eDate" type="date" value="' + (ed.date || e.d) + '"></div>';
+    + '<input id="eDate" type="date" value="' + (ed.date || e.d) + '"></div>'
+    + '<div class="note" id="eMsg"></div>';
   rowEl.after(box);
-  openRow = box;
+  openRow = box; openKey = i;
+  const say = function(m){
+    const el = document.getElementById("eMsg");
+    if (el) el.textContent = m || "";
+  };
   box.onclick = ev2 => ev2.stopPropagation();
   document.getElementById("eSkip").onclick = () => {
     edits[i] = edits[i] || {}; edits[i].skip = !edits[i].skip;
     if (!edits[i].skip && !edits[i].amount && !edits[i].date) delete edits[i];
-    box.remove(); openRow = null; render();
+    box.remove(); openRow = null; openKey = null; render();
   };
   document.getElementById("eReset").onclick = () => {
-    delete edits[i]; box.remove(); openRow = null; render();
+    delete edits[i]; box.remove(); openRow = null; openKey = null; render();
   };
+  // Whether the last keystroke was REJECTED. It decides whether `change` is
+  // allowed to do a full render - because a full render reopens the editor as
+  // a fresh node, which wipes the very message explaining the rejection. The
+  // first version of this fix told her nothing for exactly that reason.
+  let refused = false;
   document.getElementById("eAmt").oninput = ev2 => {
-    const v = parseFloat(ev2.target.value.replace(/[^0-9.]/g,""));
+    // SAY WHAT WAS REJECTED. The old line stripped every non-digit and handed
+    // the rest to parseFloat, so a minus sign disappeared (-20 recorded as 20)
+    // and a second dot truncated (12.34.56 recorded as 12.34). Both silently,
+    // both the wrong amount of money, and the email that reaches me reported
+    // the wrong figure as though she had typed it.
+    const got = readAmount(ev2.target.value, false);
     edits[i] = edits[i] || {};
-    if (isNaN(v)) delete edits[i].amount; else edits[i].amount = v;
+    const msg = got.msg;
+    if (!msg) {
+      if (got.v === null) delete edits[i].amount; else edits[i].amount = got.v;
+    }
+    say(msg);
+    refused = !!msg;
     if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
-    render();
+    // keepList: DO NOT rebuild the list under her finger. That is what
+    // destroyed this very input on the first keystroke.
+    render(true);
   };
+  // AND CATCH THE ROW UP WHEN SHE IS DONE. `change` fires on blur or Enter,
+  // never mid-keystroke, so a full render here is safe and it is what stops the
+  // row sitting there showing the old figure after she has corrected it. The
+  // editor is put straight back by render(), so she does not lose her place.
+  // UNLESS the value was refused: nothing moved, so there is nothing to catch
+  // up, and re-rendering would replace the editor with a fresh one and take the
+  // explanation with it.
+  document.getElementById("eAmt").onchange = () => { if (!refused) render(); };
   document.getElementById("eDate").onchange = ev2 => {
     edits[i] = edits[i] || {};
-    if (ev2.target.value && ev2.target.value !== e.d) edits[i].date = ev2.target.value;
-    else delete edits[i].date;
+    const v = ev2.target.value;
+    if (v && v !== e.d) edits[i].date = v; else delete edits[i].date;
     if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
-    box.remove(); openRow = null; render();
+    // MOVING IT OUT OF THE CYCLE IS ALLOWED AND IS NOT SILENT. "It went out
+    // next month instead" is a true thing to tell the app and the total is
+    // right to drop it - what was wrong is that it happened without a word
+    // while the row still showed the full amount as a live cost. Now the row
+    // is tagged "not this cycle" and this says so out loud.
+    const out = v && (v < D.cycleStart || v > D.cycleEnd);
+    box.remove(); openRow = null; openKey = null; render();
+    if (out) {
+      const c = document.getElementById("changed");
+      if (c) c.textContent = e.n + " moved to " + nice(v)
+           + ", which is outside this cycle - it has come out of the total.";
+    }
   };
 }
 
@@ -1004,9 +1421,23 @@ document.getElementById("copyBtn").onclick = () => {
 const bal = document.getElementById("bal");
 const paid = document.getElementById("paidPartner");
 bal.addEventListener("input", () => {
-  save("bal", bal.value); save("balOn", today()); render();
+  // Re-reading the balance is what clears the partner-transfer warning. It is
+  // the action the warning asks for, so it is the action that dismisses it -
+  // a warning she cannot make go away by doing the right thing gets ignored.
+  save("bal", bal.value); save("balOn", today()); save("balStale", false);
+  render();
 });
-paid.addEventListener("change", () => { save("paid", paid.checked); render(); });
+paid.addEventListener("change", () => {
+  save("paid", paid.checked);
+  // Recorded so the balance-is-stale prompt can tell whether the balance was
+  // read before or after the money actually left. Cleared when she unticks,
+  // so unticking cannot leave a prompt behind that no longer applies.
+  // Ticking says his money has gone, so whatever balance is on screen was read
+  // before it went. Unticking clears the flag with it - a warning about a
+  // transfer she has just said did not happen is noise.
+  save("balStale", !!paid.checked);
+  render();
+});
 
 const sb = load("bal"); if (sb) bal.value = sb;
 paid.checked = !!load("paid");
@@ -1088,7 +1519,155 @@ if (cc) cc.addEventListener("click", () => {
   }
 });
 
+
+// THE CARRY-OVER EDITOR. Any derived carry-over rests on the last balance she
+// typed in the cycle that ended, which may be weeks old - so it is hers to
+// correct, and the row says where the figure came from. Replacing one silent
+// guess with a quieter silent guess would not have been a fix.
+(function carryEditor(){
+  const save2 = document.getElementById("cSave");
+  if (!save2) return;
+  save2.onclick = (ev) => {
+    ev.stopPropagation();
+    const box = document.getElementById("cAmt");
+    const msg = document.getElementById("cMsg");
+    const txt = String(box.value || "").trim();
+    if (txt === "") {
+      // Cleared: fall back to whatever the app can work out for itself.
+      localStorage.removeItem(K + ":carry");
+      localStorage.removeItem(K + ":carryFrom");
+      msg.textContent = "";
+      document.getElementById("carryEdit").style.display = "none";
+      render();
+      return;
+    }
+    const got = readAmount(txt, true);
+    if (got.msg) { msg.textContent = got.msg; return; }
+    save("carry", got.v);
+    save("carryFrom", "you set this");
+    msg.textContent = "";
+    document.getElementById("carryEdit").style.display = "none";
+    render();
+  };
+  const amt = document.getElementById("cAmt");
+  if (amt) amt.onclick = ev => ev.stopPropagation();
+})();
+
+
+// ===================== THE RULES REFRESH ==============================
+// Fetch the encrypted rules, decrypt them with the key on this device, and
+// update if they have changed. Runs AFTER the first render, on purpose: she
+// gets her numbers instantly from cache and this catches up, rather than a boot
+// that waits on a network round trip and sometimes shows her nothing.
+//
+// Every failure is silent BY DESIGN except one. Offline, no key, a 404, a
+// server hiccup - the cached rules were always going to be right for a month at
+// a time, and an error message about a background refresh she did not ask for
+// is noise. The exception is a key that cannot decrypt the file, because that
+// means she will never get another update and would never find out.
+function b64uToBytes(s){
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function b64ToBytes(s){
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function fetchRules(keyB64){
+  // no-store AND a cache-buster. The service worker is network-first, but a
+  // stale rules file is the one thing this feature cannot tolerate: it would
+  // look exactly like everything working.
+  const res = await fetch("rules.enc?t=" + Date.now(), {cache: "no-store"});
+  if (!res.ok) throw new Error("http " + res.status);
+  const blob = await res.json();
+  const key = await crypto.subtle.importKey(
+    "raw", b64uToBytes(keyB64), {name: "AES-GCM"}, false, ["decrypt"]);
+  // AES-GCM is AUTHENTICATED, so a tampered file throws rather than decrypting
+  // to something plausible. That matters more than secrecy here: anyone can
+  // serve her a file, and the failure mode of an unauthenticated cipher is a
+  // confident wrong budget.
+  const plain = await crypto.subtle.decrypt(
+    {name: "AES-GCM", iv: b64ToBytes(blob.n)}, key, b64ToBytes(blob.c));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// STABLE STRINGIFY. Key order is an accident of whoever wrote the JSON - the
+// baked blob and the encrypted file carry the same rules in different orders -
+// so a plain JSON.stringify comparison reported CHANGED on every open. Sorting
+// the keys makes "are these the same rules?" answerable.
+function stableJSON(v){
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(stableJSON).join(",") + "]";
+  return "{" + Object.keys(v).sort().map(
+    k => JSON.stringify(k) + ":" + stableJSON(v[k])).join(",") + "}";
+}
+
+async function refreshRules(){
+  let keyB64 = null;
+  try { keyB64 = localStorage.getItem("spare:key"); } catch (e) {}
+  if (!keyB64) return "no key";
+  if (!window.crypto || !crypto.subtle || !window.fetch) return "no crypto";
+  let incoming;
+  try {
+    incoming = await fetchRules(keyB64);
+  } catch (e) {
+    // A DECRYPT failure is the one worth speaking up about: it means this
+    // device will never receive another update and nothing else would ever say
+    // so. A network failure is not - she is on a train.
+    const bad = /operation|decrypt|cipher/i.test(String(e && e.message));
+    if (bad && R) {
+      const c = document.getElementById("changed");
+      if (c) c.textContent = "This phone's setup key no longer opens the "
+                           + "rules, so it will not pick up bill changes. "
+                           + "Ask for a new setup code.";
+    }
+    return "failed: " + (e && e.message);
+  }
+  const now = JSON.stringify(incoming);
+  // The CANONICAL forms are what get compared; the plain one is what gets
+  // stored, so the cache stays readable.
+  const nowKey = stableJSON(incoming);
+  // WAS THERE ANYTHING HERE BEFORE? A device holding only a key rendered the
+  // not-set-up screen, and half the page's wiring never ran - so patching the
+  // figures into it would leave a broken hybrid. It reloads instead, which is
+  // the one case where waiting is right because there was nothing to wait in
+  // front of.
+  const wasEmpty = !R;
+  let before = null;
+  try { before = localStorage.getItem("spare:rules"); } catch (e) {}
+  let beforeKey = null;
+  try { beforeKey = before === null ? null : stableJSON(JSON.parse(before)); }
+  catch (e) { beforeKey = before; }
+  try { localStorage.setItem("spare:rules", now); } catch (e) {}
+  if (beforeKey === nowKey && !wasEmpty) return "unchanged";
+  R = incoming;
+  D = buildModel(R, today());
+  if (wasEmpty) { location.reload(); return "reloaded"; }
+  render();
+  const c = document.getElementById("changed");
+  if (c) c.textContent = before === null
+    ? "Setup received."
+    : "Your bills were updated" + (incoming.built ? " on " + nice(incoming.built) : "")
+      + " - these figures are the new ones.";
+  return "updated";
+}
+// Exposed so a test can await it. A background job nothing can wait on is a
+// background job nothing can check.
+window.__rulesRefresh = refreshRules;
+
 render();
+// CAPTURED, so a test can await the REAL boot refresh rather than firing a
+// second one and measuring that instead. The first version of the test called
+// __rulesRefresh() itself, got "unchanged" back because boot had already done
+// the work, and reported a failure against a feature that was working.
+window.__rulesReady = refreshRules();
 
 // A WAY IN FOR A NEW CODE WHEN THE APP IS ALREADY SET UP. Without this the
 // paste box only ever appeared on an empty install, so "I have changed a bill,
