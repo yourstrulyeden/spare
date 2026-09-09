@@ -128,6 +128,7 @@
   <div class="up" id="upcoming"></div>
   <div id="addBox"></div>
   <div class="note" id="changed"></div>
+  <div id="changeList" style="display:none;margin-top:8px"></div>
   <div id="sendBox" style="display:none;margin-top:10px">
     <button id="mailBtn" style="width:100%;background:var(--pop);color:#17101f;
             border:0;border-radius:12px;padding:14px;font-size:15px;font-weight:700">
@@ -763,6 +764,9 @@ let extras = load("extras") || [];
 // Conservative on purpose: exactly one event with that name, or nothing.
 // Choosing between two candidates would be inventing a statement she never made.
 let orphanNote = "";
+// Whether the applied-changes list is open. Module-level so a
+// re-render does not fold it back up under her while she reads it.
+let shownChanges = false;
 function rematchEdits(){
   if (!D || !D.events) return;
   const live = {};
@@ -1535,8 +1539,42 @@ function render(keepList){
     document.getElementById("changed").textContent = orphanNote;
   } else
   document.getElementById("changed").textContent = n
-    ? n + (n===1?" change":" changes") + " this cycle — they clear when the next one starts"
+    ? n + (n===1?" change":" changes") + " this cycle — tap to see them"
     : "Something cancelled, moved or a different amount? Tap it.";
+
+  // THE ITEMS, not the count. She cannot disagree with "3 changes", and until
+  // now the only place the actual list existed was inside an email body - so
+  // checking what her app was applying to her money meant opening her mail.
+  (function(){
+    const box = document.getElementById("changeList");
+    const head = document.getElementById("changed");
+    const it = changeItems();
+    if (!it.applied.length && !it.lost.length) {
+      box.style.display = "none"; box.innerHTML = ""; head.style.cursor = "";
+      return;
+    }
+    head.style.cursor = "pointer";
+    head.style.textDecoration = "underline";
+    head.style.textDecorationStyle = "dotted";
+    const rows = it.lost.map(function(x){
+      return '<div class="row"><span class="k">' + esc(x.n)
+           + '<br><small class="warnc">' + esc(x.what) + '</small></span></div>';
+    }).concat(it.applied.map(function(x){
+      return '<div class="row"><span class="k">' + esc(x.n)
+           + '<br><small style="opacity:.6">' + esc(nice(x.d)) + '</small></span>'
+           + '<span class="v" style="font-weight:400;font-size:13px">'
+           + esc(x.what) + '</span></div>';
+    }));
+    box.innerHTML = rows.join("");
+    // An orphan is never hidden behind a tap. It is the one that has already
+    // changed her figures without telling her.
+    if (it.lost.length) shownChanges = true;
+    box.style.display = shownChanges ? "" : "none";
+    head.onclick = function(){
+      shownChanges = !shownChanges;
+      box.style.display = shownChanges ? "" : "none";
+    };
+  })();
   const nExtra = extras.filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd).length;
   document.getElementById("sendBox").style.display = (n || nExtra) ? "" : "none";
   renderSuggestion();
@@ -1679,29 +1717,81 @@ function openEditor(i, rowEl, force){
 // utility at a new
 // price is permanent. She cannot tell which from inside one cycle and neither can
 // the app, so it hands the list to me and I decide whether bills.json moves.
-function changeText(){
-  const byKey = {};
-  D.events.forEach(function(e){ byKey[editKey(e)] = e; });
-  const lines = Object.entries(edits).map(([i, ed]) => {
-    const e = byKey[i] || D.events[i];
-    if (!e) return "- (an edit whose bill is no longer in this cycle)";
-    const bits = [];
-    if (ed.skip) bits.push("didn't happen");
-    if (ed.amount != null) bits.push("was " + gbp(Math.abs(e.a)) + ", actually " + gbp(ed.amount));
-    if (ed.date) bits.push("moved from " + nice(e.d) + " to " + nice(ed.date));
-    return "- " + e.n + " (" + nice(e.d) + "): " + bits.join(", ");
+// ONE DERIVATION, THREE RENDERINGS - the on-screen list, the email, and the
+// count. It is read off eventsNow(), which is the function the MONEY uses, so a
+// change shown as applied is applied by construction rather than by a second
+// walk over `edits` that could quietly drift out of step with the first.
+//
+// An edit key that no live event carries is an orphan, and that falls out of
+// the same pass. A rules update is allowed to move a bill; it is not allowed to
+// throw away what she said about it and change what somebody is owed.
+function changeItems(){
+  const live = eventsNow();
+  const seen = {};
+  const applied = [];
+  live.forEach(function(e){
+    if (e.extra) {
+      seen[e.i] = 1;
+      const w = (e.a > 0 ? "money in " : "money out ") + gbp(Math.abs(e.a));
+      applied.push({n: e.n, d: e.d, at: e.d, extra: true, what: w, text: w});
+      return;
+    }
+    if (!(e.skip || e.edited || e.moved)) return;
+    seen[e.i] = 1;
+    // THE ORIGINAL DATE IS IN THE KEY. `e.d` is where the bill sits AFTER her
+    // move, so a message built only from that loses the date it moved from -
+    // which is the field that decides whether bills.json should change. The key
+    // is date|name and it is the only surviving record of where it started.
+    const was = String(e.i).split("|")[0] || e.d;
+    // Two renderings, one set of facts. The email says it long, because it is
+    // read cold and away from the app; the screen says it short, because a date
+    // column is already sitting next to it.
+    const long = [], short = [];
+    if (e.skip) { long.push("didn't happen"); short.push("not happening"); }
+    if (e.edited) {
+      long.push("was " + gbp(Math.abs(e.orig)) + ", actually " + gbp(Math.abs(e.a)));
+      short.push(gbp(Math.abs(e.a)) + " instead of " + gbp(Math.abs(e.orig)));
+    }
+    if (e.moved) {
+      long.push("moved from " + nice(was) + " to " + nice(e.d));
+      short.push("moved from " + nice(was));
+    }
+    applied.push({n: e.n, d: was, at: e.d,
+                  what: short.join(", "), text: long.join(", ")});
   });
+  // Anything left in `edits` that no event answered to. These are the ones that
+  // cost real money when they go unsaid.
+  const lost = Object.keys(edits).filter(function(k){ return !seen[k]; })
+    .map(function(k){
+      const p = String(k).split("|");
+      return {n: p[1] || k, d: p[0] || "", lost: true,
+              what: "no longer matches any bill this month"};
+    });
+  return {applied: applied, lost: lost};
+}
+
+function changeText(){
+  const it = changeItems();
+  const lines = it.applied.filter(function(x){ return !x.extra; })
+    .map(function(x){ return "- " + x.n + " (" + nice(x.d) + "): " + x.text; });
   // One-offs go in their OWN section. They are facts about this month and imply
   // nothing about the rules, so mixing them in with the edits would invite
   // exactly the wrong conclusion - that a refund means bills.json should change.
-  const mine = extras
-    .filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd)
-    .map(x => "- " + x.n + " (" + nice(x.d) + "): "
-            + (x.a > 0 ? "money in " : "money out ") + gbp(Math.abs(x.a)));
+  const mine = it.applied.filter(function(x){ return x.extra; })
+    .map(function(x){ return "- " + x.n + " (" + nice(x.d) + "): " + x.text; });
   let out = "Changes I made in the app, cycle " + D.cycleStart + " to "
           + D.cycleEnd + ":\n" + (lines.length ? lines.join("\n") : "- none");
   if (mine.length) {
     out += "\n\nOne-offs I added (not bills, just this month):\n" + mine.join("\n");
+  }
+  // THE ORPHANS GO IN THE EMAIL TOO. They are the half I need to see most: an
+  // edit that has stopped applying has already changed her figures without
+  // saying so, and it is the one thing she cannot be expected to notice.
+  if (it.lost.length) {
+    out += "\n\nThese stopped matching anything, so they are NOT being "
+         + "applied:\n"
+         + it.lost.map(function(x){ return "- " + x.n + " (" + x.d + ")"; })
+                  .join("\n");
   }
   return out + "\n\nAre any of these permanent?";
 }
