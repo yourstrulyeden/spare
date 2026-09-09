@@ -625,6 +625,31 @@ if (!D) {
     }
   });
 
+  // A KEY WITH NO RULES IS RECOVERABLE, and this throw is what stopped it.
+  // The throw guards everything below against a null model, and `refreshRules`
+  // - the one thing that could turn a key into rules - is written below it. So
+  // the device that had just been handed a key sat on the paste screen forever
+  // while the fetch that would have fixed it never ran.
+  //
+  // Everything called here is a function DECLARATION and therefore hoisted, so
+  // it works from above its own definition. `nice` is a const arrow and is not,
+  // but the empty-device branch reloads before it could be reached.
+  let hasKey = null;
+  try { hasKey = localStorage.getItem("spare:key"); } catch (e) {}
+  if (hasKey) {
+    const note = document.getElementById("upMsg");
+    if (note) note.textContent = "Setup key received - fetching your figures...";
+    // Captured so a test can await the WHOLE sequence rather than watching the
+    // fetch start and calling that covered - which is exactly how this bug
+    // shipped: the test asserted the key was stored and stopped there.
+    window.__rulesReady = refreshRules();
+    window.__rulesReady.then(function (r) {
+      if (note && r && r.indexOf("failed") === 0) {
+        note.textContent = "Could not fetch your figures (" + r.slice(8)
+          + "). If you have signal, try opening the app again.";
+      }
+    });
+  }
   throw new Error("no model");
 }
 const P = (D.partner || 'your partner');
