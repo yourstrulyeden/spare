@@ -104,6 +104,8 @@
   <div class="pace" id="paceBox">
     <div class="bar"><i id="barFill"></i><u id="barMark"></u></div>
     <div class="paceRow"><span id="paceL"></span><span id="paceR"></span></div>
+    <div class="paceRow" style="justify-content:flex-end;margin-top:3px;opacity:.75"
+         ><span id="paceFrom"></span></div>
   </div>
 </div>
 
@@ -1351,16 +1353,37 @@ function render(keepList){
     const totalDays = Math.round((e2-s)/864e5) + 1;
     const gone = Math.min(Math.max(Math.round((nowD-s)/864e5), 0), totalDays);
     const leftDays = Math.max(totalDays - gone, 0);
-    // The SAME number as the headline. Measuring against the raw rules figure
-    // while the headline showed the edited one put two different "your spare"
-    // values on one screen.
-    const herTotal = Math.max(herNow + carry + oneOffs, 0.01);
-    const spentPc = Math.min(Math.max(1 - Math.max(safe,0)/herTotal, 0), 1);
-    const timePc  = gone/totalDays;
+    // PACE IS MEASURED FROM HER OWN FIRST BALANCE OF THIS CYCLE, NOT FROM THE
+    // MODEL. It used to compare `safe` - which comes from the balance she
+    // typed, her real account - against the rules' idea of what her spare ought
+    // to be. Those are different quantities, so any gap between her account and
+    // the model was reported as HER having overspent. Measured on day one with
+    // nothing spent: a balance 20 under the model read "20.00 behind", and 120
+    // under read "120.00 behind".
+    //
+    // The baseline is written all through the first day and frozen once the
+    // date moves on - the balance box saves on every keystroke, so there is no
+    // commit moment to hook. That means the first day always reads level, which
+    // is honest: one reading is not a rate.
+    let from = load("paceFrom");
+    if (!from || typeof from.safe !== "number" || from.on === t) {
+      from = {safe: safe, on: t, left: leftDays};
+      try { save("paceFrom", from); } catch (err) {}
+    }
+    const left0 = Math.max(from.left || leftDays, 1);
+    const onTrack = from.safe * Math.min(leftDays, left0) / left0;
+    // ROUNDED TO PENCE BEFORE THE SIGN IS READ. Unrounded, a difference of
+    // -1e-14 on a day she has done nothing at all prints "0.00 behind" - a
+    // warning colour and a worrying word attached to exactly no money.
+    const diff = Math.round((safe - onTrack) * 100) / 100;
+    // BOTH ENDS OF THE BAR ANCHOR TO THAT SAME BASELINE, so the fill and the
+    // marker are finally measuring against the same thing. Two denominators on
+    // one bar is how it could sit at 0% while the text underneath said behind.
+    const spentPc = from.safe > 0.005
+                  ? Math.min(Math.max(1 - safe/from.safe, 0), 1) : 1;
+    const timePc  = Math.min(Math.max(1 - leftDays/left0, 0), 1);
     document.getElementById("barFill").style.width = (spentPc*100).toFixed(1)+"%";
     document.getElementById("barMark").style.left  = (timePc*100).toFixed(1)+"%";
-    const onTrack = herTotal * (1 - timePc);
-    const diff = Math.max(safe,0) - onTrack;
     document.getElementById("paceL").textContent =
       leftDays + (leftDays===1?" day":" days") + " left"
       + (leftDays ? "  ·  " + gbp(Math.max(safe,0)/Math.max(leftDays,1)) + "/day" : "");
@@ -1375,6 +1398,12 @@ function render(keepList){
                    : safe < 0 ? gbp(-safe) + " short"
                    : diff >= 0 ? gbp(diff) + " ahead" : gbp(-diff) + " behind";
     pr.className = leftDays===0 ? "" : (safe < 0 || diff < 0) ? "warnc" : "pos";
+    // WHERE THE NUMBER CAME FROM. A derived figure that cannot name its source
+    // is a guess in a nice font, and this one rests entirely on one balance she
+    // typed on one day - which may be a fortnight ago.
+    document.getElementById("paceFrom").textContent =
+      (from.on === t || leftDays === 0) ? ""
+      : "measured from your " + nice(from.on) + " balance";
     }
   }
 
