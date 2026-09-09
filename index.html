@@ -310,6 +310,11 @@ function buildModel(R, todayISO){
   // herJoint/hisJoint are what each of them draws from the JOINT lines only -
   // her own lines are taken out first, because a joint delta must not be split
   // in a ratio that has either person's sole income baked into it.
+  // WHICH BILLS HAVE A FIXED PARTNER PORTION. Name -> the amount of the bill
+  // that is his and always spent, so any variation in it can only be hers.
+  const fixedFor = {};
+  R.bills.forEach(function(it){ if (it.f) fixedFor[it.n] = it.f; });
+
   const owner = {};
   let herOwn = 0, hisOwn = 0;
   R.income.forEach(function(it){
@@ -321,7 +326,7 @@ function buildModel(R, todayISO){
 
   return {
     hers: R.hers, his: R.his, bills: bills,
-    owner: owner,
+    owner: owner, fixedFor: fixedFor,
     herJoint: R.hers - herOwn, hisJoint: R.his - hisOwn,
     herSpare: Math.round(spare * R.hers / pot * 100)/100,
     hisSpare: Math.round(spare * R.his  / pot * 100)/100,
@@ -442,13 +447,22 @@ function installed(){
       const wide = what === "income";
       const got = (chunk ? chunk.split(";") : []).map(r => {
         const p = r.split(",");
-        if (p.length !== 4 && !(wide && p.length === 5)) {
-          throw new Error("a " + what + " line has " + p.length + " fields, not "
-                        + (wide ? "4 or 5" : "4") + ".");
+        if (p.length !== 4 && p.length !== 5) {
+          throw new Error("a " + what + " line has " + p.length
+                        + " fields, not 4 or 5.");
         }
         if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
         const row = {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
-        if (wide) row.t = p[4] || "j";
+        if (p.length === 5) {
+          // A BILL's 5th field is a NUMBER - the part of it that is the
+          // partner's and is always spent. An INCOME's is a letter, saying
+          // whose money the line is. Telling them apart by shape keeps one
+          // format for both kinds of row.
+          if (wide) row.t = p[4] || "j";
+          else if (isFinite(+p[4])) row.f = +p[4];
+        } else if (wide) {
+          row.t = "j";
+        }
         return row;
       });
       if (!got.length) throw new Error("there are no " + what + " lines in this code.");
@@ -859,8 +873,42 @@ function render(keepList){
   // number because she cannot tell what it means.
   const herShare = agreed > 0 ? D.hers / agreed : 0;
   const hisShare = agreed > 0 ? D.his / agreed : 0;
-  const herNow = Math.round((herIn - billsNow * herShare) * 100) / 100;
-  const hisNow = Math.round((hisIn - billsNow * hisShare) * 100) / 100;
+  // A SAVING ON A BILL WITH A FIXED PARTNER PORTION IS HERS ALONE. Some bills
+  // are a single payment covering two fixed allowances, one of which is always
+  // spent in full. Only the other one can vary, so a change in the total can
+  // only ever belong to whoever owns that part - and splitting it by the income
+  // ratio handed the other person a share of a saving that was never theirs.
+  //
+  // Same shape as the rent, with the parts swapped: there a fixed portion was
+  // neither of theirs, here it belongs to one of them and always goes.
+  //
+  // The bill total is left honest - it shows what she told it. What is
+  // corrected is the split: the share of the saving that would have gone to him
+  // is handed back, so she ends up with all of it and his spare does not move.
+  let hersAlone = 0;
+  ev.forEach(function(e){
+    if (e.extra || !(e.orig < 0)) return;
+    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    const fixed = (D.fixedFor || {})[e.n];
+    if (!fixed) return;
+    const budgeted = -e.orig;
+    const actual = e.skip ? 0 : -e.a;
+    const herPortion = budgeted - fixed;
+    if (!(herPortion > 0)) return;
+    // CAPPED BOTH WAYS. Only her portion was ever hers to save or overspend; a
+    // shop under his 40 means his part did not all go either, and the rest is
+    // a real household saving that splits normally.
+    const change = Math.max(Math.min(budgeted - actual, herPortion), -herPortion);
+    hersAlone += change * hisShare;
+  });
+  // NOT ROUNDED HERE. Rounding this and then rounding the two figures it feeds
+  // is a double round, and it put a stray penny on the overspend case:
+  // -20.01 against +0.01 where the honest answer is -20.00 and nothing. A penny
+  // is worth chasing in a budget she has to trust - the whole 30p investigation
+  // was one.
+
+  const herNow = Math.round((herIn - billsNow * herShare + hersAlone) * 100) / 100;
+  const hisNow = Math.round((hisIn - billsNow * hisShare - hersAlone) * 100) / 100;
 
   // EVERYTHING AHEAD IS MEASURED FROM THE DAY THE BALANCE WAS TAKEN, not from
   // today. The balance she typed already contains everything that had happened
@@ -910,6 +958,23 @@ function render(keepList){
   // of the ratio and charge her MORE bills for having underspent, which is a
   // budget that punishes care. It is hers alone: the partner's share is transferred to
   // him each cycle, so whatever is still in her account at the end is her own.
+  // ONE-OFFS ARE HERS ALONE, exactly like carry-over: money that is hers and
+  // was never for bills. Eden ruled on 9 Sept 2026 that a refund belongs in
+  // "your spare this month" the same way carry-over already does - it only
+  // showed in safe-to-spend, so the headline figure was not the whole truth
+  // about her month.
+  //
+  // Money OUT comes off it too. A vet bill is not a household bill for the two
+  // of them to divide, so it is hers to absorb, and a figure that only ever
+  // moves upwards is one she cannot trust.
+  let oneOffs = 0;
+  ev.forEach(function(e){
+    if (!e.extra) return;
+    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    oneOffs += e.a;
+  });
+  oneOffs = Math.round(oneOffs * 100) / 100;
+
   // ---- CARRY-OVER ----------------------------------------------------
   // The baked figure belongs to the cycle it was MEASURED for. Past that it is
   // somebody else's month, and using it means showing a confident wrong number
@@ -987,7 +1052,7 @@ function render(keepList){
     if (open) document.getElementById("cAmt").value = carry ? String(carry) : "";
   };
 
-  document.getElementById("herSpare").textContent = gbp(herNow + carry);
+  document.getElementById("herSpare").textContent = gbp(herNow + carry + oneOffs);
   document.getElementById("hisSpare").textContent = gbp(hisNow);
   document.getElementById("bills").textContent   = gbp(billsNow);
   document.getElementById("toGo").textContent    = gbp(-out);
@@ -1037,6 +1102,29 @@ function render(keepList){
     // figure that can only ever be too high.
     // THE SAME SHAPE AS THE STALE WARNING and for the same reason: a figure
     // that can only be too high, with nothing on screen admitting it.
+    // TOPPED UP OR OVERPAID. Once she has ticked, his share can still move -
+    // a bill of hers falls through and his share of the month's spare grows;
+    // a one-off appears and it shrinks. The ask used to just change, with the
+    // tick still on, saying nothing.
+    if (paid) {
+      const sent = load("paidAmt");
+      if (typeof sent === "number") {
+        const owedNow = Math.max(hisNow, 0);
+        const diff = Math.round((owedNow - sent) * 100) / 100;
+        if (diff > 0.005) {
+          why = "⚠ since you marked " + P + "'s share as sent, a bill has come "
+              + "off and his share has grown. You have sent " + gbp(sent)
+              + " and it is now " + gbp(owedNow) + " — " + gbp(diff)
+              + " still to go. " + why;
+          note.className = "s warnc";
+        } else if (diff < -0.005) {
+          why = "Since you marked " + P + "'s share as sent his share has "
+              + "fallen: you sent " + gbp(sent) + " and it is now "
+              + gbp(owedNow) + ", so " + gbp(-diff) + " of that is yours back. "
+              + why;
+        }
+      }
+    }
     if (!balAfterPaying) {
       why = "⚠ you have marked " + P + "'s share as sent, but this balance is "
           + "from before that. Update it above so it does not get counted "
@@ -1096,7 +1184,7 @@ function render(keepList){
       document.getElementById("barMark").style.left = "0%";
       document.getElementById("paceL").textContent = "cycle starts " + long(D.cycleStart);
       const pr0 = document.getElementById("paceR");
-      pr0.textContent = gbp(Math.max(herNow + carry, 0)) + " to come";
+      pr0.textContent = gbp(Math.max(herNow + carry + oneOffs, 0)) + " to come";
       pr0.className = "pos";
     } else {
     const s = new Date(D.cycleStart+"T00:00:00"), e2 = new Date(D.cycleEnd+"T00:00:00");
@@ -1107,7 +1195,7 @@ function render(keepList){
     // The SAME number as the headline. Measuring against the raw rules figure
     // while the headline showed the edited one put two different "your spare"
     // values on one screen.
-    const herTotal = Math.max(herNow + carry, 0.01);
+    const herTotal = Math.max(herNow + carry + oneOffs, 0.01);
     const spentPc = Math.min(Math.max(1 - Math.max(safe,0)/herTotal, 0), 1);
     const timePc  = gone/totalDays;
     document.getElementById("barFill").style.width = (spentPc*100).toFixed(1)+"%";
@@ -1191,8 +1279,10 @@ function render(keepList){
     + '<input id="xDate" type="date" style="flex:2">'
     + '<button id="xAdd" style="flex:1;background:var(--pop);color:#17101f;'
     + 'font-weight:700;border:0">Add</button></div>'
-    + '<div class="note" id="xMsg">Only for money you have NOT had yet. If it is '
-    + 'already in the account, just update the balance at the top.</div>'
+    + '<div class="note" id="xMsg">Put in the date it actually happened. If it '
+    + 'has already landed, update your balance at the top as well - recording '
+    + 'it here is what makes it count as YOURS rather than disappearing into '
+    + 'the month.</div>'
     + '</div></div>';
   let dir = 1;
   const dIn = document.getElementById("dirIn"), dOut = document.getElementById("dirOut");
@@ -1436,6 +1526,17 @@ paid.addEventListener("change", () => {
   // before it went. Unticking clears the flag with it - a warning about a
   // transfer she has just said did not happen is noise.
   save("balStale", !!paid.checked);
+  // WHAT HE WAS OWED AT THE MOMENT SHE TICKED. The tick means "I have sent what
+  // it said AT THE TIME", so that figure is the thing to compare against later.
+  // Without it, freeing a bill afterwards raised the ask in silence and she had
+  // no way to know she was short.
+  if (paid.checked) {
+    const shown = (document.getElementById("partnerAmt").textContent || "")
+      .replace(/[^0-9.]/g, "");
+    save("paidAmt", shown === "" ? null : parseFloat(shown));
+  } else {
+    save("paidAmt", null);
+  }
   render();
 });
 
