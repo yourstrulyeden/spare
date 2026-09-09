@@ -1939,7 +1939,22 @@ document.getElementById("foot").innerHTML =
       + 'has to travel by clipboard. It still never leaves your phone.</div></div>')
   + (D.stale
       ? "old-style setup &mdash; paste a new code"
-      : "setup code from " + nice(D.built) + " &middot; works its own months out")
+      : (function () {
+          // HOW OLD ARE THESE RULES? The date was already on screen and the
+          // app was leaving her to do the subtraction. If the refresh stops
+          // reaching this phone nothing else would ever say so - the figures
+          // stay plausible and simply stop moving.
+          const days = Math.round(
+            (new Date(today() + "T00:00:00") - new Date(D.built + "T00:00:00"))
+            / 864e5);
+          if (days > 45) {
+            return '<span class="warnc">setup code from ' + nice(D.built)
+              + ' &mdash; ' + days + ' days old. It should update itself '
+              + 'whenever you open this. If it has not, tell me.</span>';
+          }
+          return "setup code from " + nice(D.built)
+               + " &middot; works its own months out";
+        })())
   + '<br><a href="#" id="updateLink" style="color:#7c6a89">update setup code</a>'
   + (on && on !== today() ? "<br>balance you entered on " + long(on) : "");
 
@@ -2175,6 +2190,54 @@ render();
 // second one and measuring that instead. The first version of the test called
 // __rulesRefresh() itself, got "unchanged" back because boot had already done
 // the work, and reported a failure against a feature that was working.
+// ASK FOR PERSISTENT STORAGE, EVERY LAUNCH. Being a home-screen app already
+// exempts this origin from ITP's 7-day wipe - but that exemption is checked in
+// a different place from the one quota-eviction and time-based eviction look
+// at, and those two only ever check the `persisted` flag. WebKit grants the
+// request to a home-screen app and refuses it to a Safari tab, which makes the
+// answer itself worth having.
+//
+// Deliberately silent on success. She did not ask for this and there is nothing
+// for her to do about it.
+(function () {
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().then(function (granted) {
+        window.__persisted = granted;
+      }, function () { window.__persisted = null; });
+    }
+  } catch (e) { /* not available; the ITP exemption still stands */ }
+})();
+
+// AND SAY SO IF THIS IS NOT ACTUALLY THE INSTALLED APP.
+//
+// iOS 26 puts an "Open as Web App" switch on the add-to-Home-Screen sheet. With
+// it OFF the icon is a bookmark that opens in Safari - a DIFFERENT storage
+// partition, with the 7-day cap live and no exemption. Same icon, same tap,
+// and the key she scanned is not there.
+//
+// The app is the only thing in the world that can tell her, so it does. It does
+// NOT refuse to run: a browser tab still shows correct figures from a pasted
+// code, and a working app that warns beats a blank screen that lectures.
+(function () {
+  try {
+    const installed = window.navigator.standalone === true
+      || (window.matchMedia
+          && window.matchMedia("(display-mode: standalone)").matches);
+    if (installed || location.protocol !== "https:") return;
+    const box = document.getElementById("foot");
+    if (!box) return;
+    const w = document.createElement("div");
+    w.className = "note warnc";
+    w.style.marginTop = "10px";
+    w.textContent = "You are in the browser, not the installed app. Anything "
+      + "you change here can be cleared after a week without warning. Add it to "
+      + "your Home Screen with \u201cOpen as Web App\u201d switched ON, and "
+      + "use the icon.";
+    box.parentNode.insertBefore(w, box);
+  } catch (e) { /* nothing to warn with; never break the app over a warning */ }
+})();
+
 window.__rulesReady = refreshRules();
 
 // AND AGAIN WHENEVER SHE COMES BACK TO IT. On iOS a home-screen app resumed
