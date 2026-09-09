@@ -83,6 +83,11 @@
     <span class="k">Sent <b id="partnerName"></b> his <b id="partnerAmt"></b>?</span>
     <input type="checkbox" id="paidPartner" class="chk">
   </div>
+  <div class="ed" id="balSuggest" style="display:none">
+    <div class="note" id="balSuggestWhy" style="margin:0 0 8px"></div>
+    <div class="b"><button id="balYes"></button>
+      <button id="balNo">No, leave it</button></div>
+  </div>
   <div class="note">Read the balance off your banking app. Your bank already knows what
   you spent &mdash; there is nothing else to type.</div>
 </div>
@@ -599,6 +604,17 @@ if (!D) {
     const raw = (field.value || "").trim();
     if (!raw) { msg.textContent = "Nothing in the box yet."; return; }
     // Accept a whole URL, a #r=... fragment, or the bare payload.
+    // A KEY, NOT RULES. Her app is installed, so scanning puts the key in
+    // SAFARI's storage and a home-screen web app cannot read that - the
+    // clipboard is the only way across, exactly as it is for a rules code.
+    // Without this the paste box rejects a key as "cut short", which is the
+    // same dead end as before on the same screen.
+    const kraw = raw.indexOf("#k=") >= 0 ? raw.slice(raw.indexOf("#k=") + 3) : raw;
+    if (/^[A-Za-z0-9_-]{42,44}$/.test(kraw)) {
+      localStorage.setItem("spare:pendingkey", kraw);
+      location.reload();
+      return;
+    }
     const code = raw.indexOf("#r=") >= 0 ? raw.slice(raw.indexOf("#r=") + 3) : raw;
     try {
       localStorage.setItem("spare:pending", code);
@@ -733,6 +749,7 @@ function eventsNow(){
                   ? (e.a < 0 ? -Math.abs(ed.amount) : Math.abs(ed.amount))
                   : e.a),
             n: e.n, skip: !!ed.skip, edited: ed.amount!=null, moved: !!ed.date,
+            goneOut: !!ed.gone,
             orig: e.a};
   });
   // One-offs sit in the same list and count the same way. Only ones inside this
@@ -776,6 +793,41 @@ function readAmount(txt, allowNegative){
   const v = parseFloat(s);
   if (!isFinite(v)) return {v: null, msg: "Numbers only."};
   return {v: v, msg: ""};
+}
+
+// THE BALANCE SUGGESTION. Offered, never taken - Eden's ruling, 9 Sept 2026,
+// and the argument behind it is the point: the balance is the only figure in
+// this app that comes from OUTSIDE it. Everything else is the model reasoning
+// about itself. If the app can move it, "does this match my bank?" stops being
+// a question she can ask, because it will always match itself.
+//
+// Stored rather than held in a variable, because a render would otherwise wipe
+// it a fraction of a second after it appeared.
+function suggestBalance(delta, why){
+  const cur = readAmount(document.getElementById("bal").value, true);
+  if (cur.v === null || cur.msg) return;   // nothing sensible to adjust
+  const to = Math.round((cur.v + delta) * 100) / 100;
+  save("suggest", {to: to, from: cur.v, why: String(why || ""),
+                   delta: Math.round(delta * 100) / 100});
+}
+
+function renderSuggestion(){
+  const box = document.getElementById("balSuggest");
+  if (!box) return;
+  const s = load("suggest");
+  const cur = readAmount(document.getElementById("bal").value, true);
+  // EXPIRES ON ITS OWN. A suggestion that outlives the balance it was computed
+  // against is a lie - she may have typed a fresh figure off her bank in the
+  // meantime, which is exactly the thing this must never quietly overwrite.
+  if (!s || typeof s.to !== "number" || cur.v === null || cur.v !== s.from) {
+    box.style.display = "none";
+    return;
+  }
+  box.style.display = "";
+  document.getElementById("balSuggestWhy").innerHTML =
+    esc(s.why) + (s.delta < 0 ? " has gone out." : " has come in.")
+    + " Update your balance to " + gbp(s.to) + "?";
+  document.getElementById("balYes").textContent = "Yes, make it " + gbp(s.to);
 }
 
 function render(keepList){
@@ -895,11 +947,19 @@ function render(keepList){
     const actual = e.skip ? 0 : -e.a;
     const herPortion = budgeted - fixed;
     if (!(herPortion > 0)) return;
-    // CAPPED BOTH WAYS. Only her portion was ever hers to save or overspend; a
-    // shop under his 40 means his part did not all go either, and the rest is
-    // a real household saving that splits normally.
-    const change = Math.max(Math.min(budgeted - actual, herPortion), -herPortion);
-    hersAlone += change * hisShare;
+    const saving = budgeted - actual;
+    // THE INCOME RATIO HAS NO BUSINESS HERE. This bill is divided by a fixed
+    // arrangement between the two of them, which is the entire reason it needs
+    // its own rule - so a saving is attributed to the two PORTIONS, never
+    // scaled by what either of them earns.
+    //
+    // An overspend is hers alone: the variable part is hers, so going over can
+    // only be her doing. A saving is hers up to her portion, and anything
+    // beyond that is his portion going unspent, which makes it HIS.
+    const herGets = saving <= 0 ? saving : Math.min(saving, herPortion);
+    // What the ordinary split would have given her, so only the DIFFERENCE
+    // needs correcting and the bill total on screen stays untouched.
+    hersAlone += herGets - saving * herShare;
   });
   // NOT ROUNDED HERE. Rounding this and then rounding the two figures it feeds
   // is a double round, and it put a stray penny on the overspend case:
@@ -920,7 +980,16 @@ function render(keepList){
   const balOnNow = load("balOn");
   const anchor = (typeof balOnNow === "string" && balOnNow) ? balOnNow : t;
   const stale = anchor < t;
-  const future = ev.filter(e => e.d > anchor);
+  // TICKED OFF = ALREADY OUT, whatever the dates say. This used to be decided
+  // purely by comparing each event to the day the balance was read, which is a
+  // guess: a bill due yesterday may not have landed, and one due tomorrow may
+  // have gone early. Where she has told the app, the app believes her.
+  // AND IT STOPS AT THE CYCLE END. A bill she has moved into next month is
+  // already out of the bill total - tagged "not this cycle", announced when it
+  // happened - and it was still being subtracted from safe-to-spend, so the
+  // money was out of the budget AND held back from the spending. Next month's
+  // income is what pays for a payment in next month.
+  const future = ev.filter(e => e.d > anchor && !e.goneOut && e.d <= D.cycleEnd);
 
   const out = future.reduce((s,e)=> e.a<0 ? s-e.a : s, 0);
   const inn = future.reduce((s,e)=> e.a>0 ? s+e.a : s, 0);
@@ -1238,7 +1307,8 @@ function render(keepList){
       + (gone?'<span class="tag">not this cycle</span>'
              :(e.moved?'<span class="tag">moved</span>':""))
       + (e.extra?'<span class="tag">one-off</span>':"")
-      + (e.skip?'<span class="tag">skipped</span>':"") + "</span>"
+      + (e.skip?'<span class="tag">skipped</span>':"")
+      + (e.goneOut?'<span class="tag">gone out</span>':"") + "</span>"
       + '<span class="v' + (e.orig>0?" pos":"") + '">'
       + gbp(e.skip ? 0 : e.a) + "</span>";
     r.onclick = () => openEditor(e.i, r);
@@ -1334,6 +1404,10 @@ function render(keepList){
     }
     extras.push({d: dt2, a: dir * Math.abs(amt), n: nm});
     save("extras", extras);
+    // OFFER the balance change for a one-off that has already happened. If it
+    // is still ahead the balance should NOT include it yet, so there is nothing
+    // to suggest.
+    if (dt2 <= t) suggestBalance(dir * Math.abs(amt), nm);
     render();
   };
 
@@ -1343,6 +1417,7 @@ function render(keepList){
     : "Something cancelled, moved or a different amount? Tap it.";
   const nExtra = extras.filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd).length;
   document.getElementById("sendBox").style.display = (n || nExtra) ? "" : "none";
+  renderSuggestion();
   save("edits", edits);
 }
 
@@ -1384,6 +1459,8 @@ function openEditor(i, rowEl, force){
   box.innerHTML =
     '<div class="b">'
     + '<button id="eSkip" class="' + (ed.skip?"on":"") + '">Didn\'t happen</button>'
+    + '<button id="eGone" class="' + (ed.gone?"on":"") + '">'
+    + (ed.gone ? "Gone out \u2713" : "Gone out") + '</button>'
     + '<button id="eReset">Reset</button></div>'
     + '<div class="f"><input id="eAmt" type="text" inputmode="decimal" placeholder="'
     + Math.abs(e.a).toFixed(2) + '" value="' + (ed.amount!=null?ed.amount:"") + '">'
@@ -1396,6 +1473,25 @@ function openEditor(i, rowEl, force){
     if (el) el.textContent = m || "";
   };
   box.onclick = ev2 => ev2.stopPropagation();
+  // GONE OUT. The projection used to decide this from dates alone - anything
+  // before the day she read her balance was assumed spent - so a bill due
+  // yesterday that has not actually landed was counted as gone, and one that
+  // left early was counted twice. A tick makes it exact.
+  //
+  // It also OFFERS the new balance. It does not take it: the balance is the one
+  // figure in this app that comes from outside it, and it is how she checks the
+  // app against her bank.
+  document.getElementById("eGone").onclick = () => {
+    edits[i] = edits[i] || {};
+    edits[i].gone = !edits[i].gone;
+    const nowGone = edits[i].gone;
+    if (!edits[i].skip && !edits[i].gone && edits[i].amount == null
+        && !edits[i].date) delete edits[i];
+    const amt = e.skip ? 0 : (edits[i] && edits[i].amount != null
+                              ? -Math.abs(edits[i].amount) : e.a);
+    if (nowGone && amt) suggestBalance(amt, e.n);
+    box.remove(); openRow = null; openKey = null; render();
+  };
   document.getElementById("eSkip").onclick = () => {
     edits[i] = edits[i] || {}; edits[i].skip = !edits[i].skip;
     if (!edits[i].skip && !edits[i].amount && !edits[i].date) delete edits[i];
@@ -1599,18 +1695,35 @@ document.getElementById("foot").innerHTML =
 const cc = document.getElementById("copyCode");
 if (cc) cc.addEventListener("click", () => {
   let code = "";
-  try { code = localStorage.getItem("spare:code") || ""; } catch (e) {}
+  // PREFER THE KEY. If this tab has just taken one, that is the thing that has
+  // to get across to the installed app - it is shorter, and it is the one that
+  // never needs doing again.
+  let isKey = false;
+  try {
+    const k = localStorage.getItem("spare:key");
+    if (k) { code = k; isKey = true; }
+  } catch (e) {}
+  if (!code && location.hash.indexOf("#k=") === 0) {
+    code = location.hash.slice(3); isKey = true;
+  }
+  try { if (!code) code = localStorage.getItem("spare:code") || ""; } catch (e) {}
   if (!code && location.hash.indexOf("#r=") === 0) code = location.hash.slice(3);
   if (!code) { cc.textContent = "no code stored - scan the QR again"; return; }
   // Refuse to hand over a code from an older format. spare:code survives a
   // format change, so without this the button cheerfully copies something the
   // app will then reject.
-  if (code.split("~").length !== 3 || code.split("~")[0].split(",").length !== 7) {
+  // The out-of-date check is about the RULES format and must not be run on a
+  // key, which is a single field by design and would fail it every time.
+  if (!isKey
+      && (code.split("~").length !== 3
+          || code.split("~")[0].split(",").length !== 7)) {
     cc.textContent = "that stored code is out of date - rescan the QR";
     return;
   }
   const done = () => {
-    cc.textContent = "copied - now Share, Add to Home Screen";
+    cc.textContent = isKey
+      ? "copied - now open Spare from your home screen and paste it in"
+      : "copied - now Share, Add to Home Screen";
     setTimeout(() => { cc.textContent = "Copy setup code"; }, 4000);
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1763,6 +1876,25 @@ async function refreshRules(){
 // background job nothing can check.
 window.__rulesRefresh = refreshRules;
 
+
+// The two buttons on the balance suggestion. "Yes" is the only path by which
+// anything other than Eden writes that box.
+(function balSuggestButtons(){
+  const yes = document.getElementById("balYes");
+  const no = document.getElementById("balNo");
+  if (!yes || !no) return;
+  yes.onclick = function () {
+    const s = load("suggest");
+    if (!s || typeof s.to !== "number") return;
+    const b = document.getElementById("bal");
+    b.value = s.to.toFixed(2);
+    save("bal", b.value); save("balOn", today()); save("balStale", false);
+    save("suggest", null);
+    render();
+  };
+  no.onclick = function () { save("suggest", null); render(); };
+})();
+
 render();
 // CAPTURED, so a test can await the REAL boot refresh rather than firing a
 // second one and measuring that instead. The first version of the test called
@@ -1814,6 +1946,17 @@ document.getElementById("updateLink").addEventListener("click", function (e) {
   document.getElementById("upGo").onclick = function () {
     const raw = (field.value || "").trim();
     if (!raw) { msg.textContent = "Nothing in the box yet."; return; }
+    // A KEY, NOT RULES - on the box she ACTUALLY uses. The first version of
+    // this patch went into the other paste handler, because both contain the
+    // same line and replace(anchor, new, 1) took the first one. It applied, it
+    // reported success, and the box she would have pasted into went on saying
+    // "that code looks cut short". A non-unique anchor is a silent wrong target.
+    const kraw = raw.indexOf("#k=") >= 0 ? raw.slice(raw.indexOf("#k=") + 3) : raw;
+    if (/^[A-Za-z0-9_-]{42,44}$/.test(kraw)) {
+      localStorage.setItem("spare:pendingkey", kraw);
+      location.reload();
+      return;
+    }
     const code = raw.indexOf("#r=") >= 0 ? raw.slice(raw.indexOf("#r=") + 3) : raw;
     // Check it BEFORE storing it. Storing a bad code and reloading would drop
     // her into an error on a page that had been working a second earlier.
