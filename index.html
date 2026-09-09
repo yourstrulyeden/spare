@@ -70,9 +70,7 @@
                border-radius:11px;padding:11px;font-size:15px;min-width:0}
   .foot{text-align:center;color:#5b4d69;font-size:11px;margin-top:16px;line-height:1.6}
   .chk{width:26px;height:26px;margin:0;accent-color:var(--pop)}
-</style><link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-180.png">
-</head><body>
+</style></head><body>
 
 <div class="top"><h1>Spare</h1><span class="day" id="cycle"></span></div>
 
@@ -2018,6 +2016,36 @@ render();
 // the work, and reported a failure against a feature that was working.
 window.__rulesReady = refreshRules();
 
+// AND AGAIN WHENEVER SHE COMES BACK TO IT. On iOS a home-screen app resumed
+// from the app switcher does NOT re-run its script - it un-freezes, still on
+// the page it loaded days ago. Boot-only meant "push it and her phone collects
+// it" silently depended on her fully closing the app first, which nobody does
+// on purpose and nothing on screen ever said.
+//
+// Throttled: at most once every thirty seconds, never two at once. Flicking
+// between apps should not fire a burst of fetches on a phone connection.
+// ON WINDOW, not block-scoped. A test cannot reach a binding inside the app's
+// own block, so it was setting a same-named global while the throttle went on
+// reading its own - and the feature looked dead when it had never been entered.
+// A behaviour nothing can inspect is one nothing can hold to account.
+window.__lastRefresh = Date.now();
+window.__refreshing = false;
+function refreshOnReturn(){
+  if (document.visibilityState !== "visible") return;
+  if (window.__refreshing) return;
+  if (Date.now() - window.__lastRefresh < 30000) return;
+  window.__refreshing = true;
+  window.__lastRefresh = Date.now();
+  window.__rulesReady = refreshRules().then(function (r) {
+    window.__refreshing = false;
+    return r;
+  }, function (e) { window.__refreshing = false; throw e; });
+}
+document.addEventListener("visibilitychange", refreshOnReturn);
+// pageshow fires on a bfcache restore, which visibilitychange does not always
+// cover on iOS.
+window.addEventListener("pageshow", refreshOnReturn);
+
 // A WAY IN FOR A NEW CODE WHEN THE APP IS ALREADY SET UP. Without this the
 // paste box only ever appeared on an empty install, so "I have changed a bill,
 // paste the new code" had no second half - her only option was deleting the app.
@@ -2090,5 +2118,4 @@ document.getElementById("updateLink").addEventListener("click", function (e) {
     }
   };
 });
-</script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');</script>
-</body></html>
+</script></body></html>

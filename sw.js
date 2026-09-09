@@ -1,4 +1,4 @@
-const CACHE = "spare-v1788961510";
+const CACHE = "spare-v1788962013";
 const FILES = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", e => {
