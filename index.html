@@ -1556,9 +1556,12 @@ function render(keepList){
     head.style.cursor = "pointer";
     head.style.textDecoration = "underline";
     head.style.textDecorationStyle = "dotted";
-    const rows = it.lost.map(function(x){
+    const rows = it.lost.map(function(x, ix){
       return '<div class="row"><span class="k">' + esc(x.n)
-           + '<br><small class="warnc">' + esc(x.what) + '</small></span></div>';
+           + '<br><small class="warnc">' + esc(x.what) + '</small></span>'
+           + '<button id="dropOrphan' + ix + '" style="background:#1c1526;'
+           + 'border:1px solid var(--line);color:var(--dim);border-radius:9px;'
+           + 'padding:7px 11px;font-size:12px">Remove</button></div>';
     }).concat(it.applied.map(function(x){
       return '<div class="row"><span class="k">' + esc(x.n)
            + '<br><small style="opacity:.6">' + esc(nice(x.d)) + '</small></span>'
@@ -1566,6 +1569,20 @@ function render(keepList){
            + esc(x.what) + '</span></div>';
     }));
     box.innerHTML = rows.join("");
+    // A WARNING SHE CANNOT DISMISS IS ONE SHE LEARNS TO SCROLL PAST, and then
+    // it is not there on the day it means something. A stranded edit is often
+    // genuinely dead - a skip for a bill that has since been cancelled outright
+    // matches nothing because there is nothing left to match.
+    it.lost.forEach(function(x, ix){
+      const b = document.getElementById("dropOrphan" + ix);
+      if (!b) return;
+      b.onclick = function(){
+        delete edits[x.key];
+        try { save("edits", edits); } catch (err) {}
+        orphanNote = "";
+        render();
+      };
+    });
     // An orphan is never hidden behind a tap. It is the one that has already
     // changed her figures without telling her.
     if (it.lost.length) shownChanges = true;
@@ -1736,7 +1753,11 @@ function changeItems(){
       applied.push({n: e.n, d: e.d, at: e.d, extra: true, what: w, text: w});
       return;
     }
-    if (!(e.skip || e.edited || e.moved)) return;
+    // goneOut IS A KIND OF CHANGE, and leaving it out of this test was a real
+    // bug: an event carrying only a tick fell through to the orphan list and
+    // told her a bill she had just watched leave "no longer matches anything
+    // this month", under a message about not sending anyone money.
+    if (!(e.skip || e.edited || e.moved || e.goneOut)) return;
     seen[e.i] = 1;
     // THE ORIGINAL DATE IS IN THE KEY. `e.d` is where the bill sits AFTER her
     // move, so a message built only from that loses the date it moved from -
@@ -1747,6 +1768,8 @@ function changeItems(){
     // read cold and away from the app; the screen says it short, because a date
     // column is already sitting next to it.
     const long = [], short = [];
+    if (e.goneOut) { long.push("ticked off as gone out");
+                     short.push("gone out"); }
     if (e.skip) { long.push("didn't happen"); short.push("not happening"); }
     if (e.edited) {
       long.push("was " + gbp(Math.abs(e.orig)) + ", actually " + gbp(Math.abs(e.a)));
@@ -1757,6 +1780,9 @@ function changeItems(){
       short.push("moved from " + nice(was));
     }
     applied.push({n: e.n, d: was, at: e.d,
+                  // a tick is a fact about this month and says nothing about
+                  // whether the RULES should change, so the email keeps it apart
+                  tick: !!(e.goneOut && !e.skip && !e.edited && !e.moved),
                   what: short.join(", "), text: long.join(", ")});
   });
   // Anything left in `edits` that no event answered to. These are the ones that
@@ -1764,7 +1790,7 @@ function changeItems(){
   const lost = Object.keys(edits).filter(function(k){ return !seen[k]; })
     .map(function(k){
       const p = String(k).split("|");
-      return {n: p[1] || k, d: p[0] || "", lost: true,
+      return {n: p[1] || k, d: p[0] || "", lost: true, key: k,
               what: "no longer matches any bill this month"};
     });
   return {applied: applied, lost: lost};
@@ -1772,8 +1798,14 @@ function changeItems(){
 
 function changeText(){
   const it = changeItems();
-  const lines = it.applied.filter(function(x){ return !x.extra; })
+  const lines = it.applied
+    .filter(function(x){ return !x.extra && !x.tick; })
     .map(function(x){ return "- " + x.n + " (" + nice(x.d) + "): " + x.text; });
+  // Ticked off as already gone. Kept OUT of the list above because that list
+  // ends with "are any of these permanent?", and that question is meaningless
+  // about a bill she simply watched leave.
+  const ticks = it.applied.filter(function(x){ return x.tick; })
+    .map(function(x){ return "- " + x.n + " (" + nice(x.d) + ")"; });
   // One-offs go in their OWN section. They are facts about this month and imply
   // nothing about the rules, so mixing them in with the edits would invite
   // exactly the wrong conclusion - that a refund means bills.json should change.
@@ -1783,6 +1815,9 @@ function changeText(){
           + D.cycleEnd + ":\n" + (lines.length ? lines.join("\n") : "- none");
   if (mine.length) {
     out += "\n\nOne-offs I added (not bills, just this month):\n" + mine.join("\n");
+  }
+  if (ticks.length) {
+    out += "\n\nTicked off as already gone out:\n" + ticks.join("\n");
   }
   // THE ORPHANS GO IN THE EMAIL TOO. They are the half I need to see most: an
   // edit that has stopped applying has already changed her figures without
