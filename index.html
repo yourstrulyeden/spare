@@ -2224,7 +2224,7 @@ render();
     const installed = window.navigator.standalone === true
       || (window.matchMedia
           && window.matchMedia("(display-mode: standalone)").matches);
-    if (installed || location.protocol !== "https:") return;
+    if (installed || !window.isSecureContext) return;
     const box = document.getElementById("foot");
     if (!box) return;
     const w = document.createElement("div");
@@ -2347,7 +2347,12 @@ document.getElementById("updateLink").addEventListener("click", function (e) {
 // GUARDED ON https, because the same template also builds the local
 // spare.html that Eden opens over file:// - and registering a worker
 // there throws. One template, two builds, one condition.
-if (location.protocol === "https:" && "serviceWorker" in navigator) {
+// isSecureContext, NOT a protocol string. The first version tested for
+// "https:" and was too narrow: localhost is a secure context served over
+// http, so it blocked registration in the very test written to exercise the
+// worker. isSecureContext is the exact predicate the platform uses - true for
+// https and for localhost, false for the file:// build.
+if (window.isSecureContext && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js");
 }
 </script>
