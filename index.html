@@ -735,6 +735,9 @@ let extras = load("extras") || [];
 // MIGRATE ONCE, THEN FORGET. Any edit still keyed by array position is moved
 // onto the identity of whatever it pointed at, and the numeric key is dropped -
 // so it can never later attach itself to a different bill.
+// AND AGAIN AFTER ANY RULES UPDATE. Called at boot below, and from
+// refreshRules when the rules actually change - which is the moment an edit
+// can be orphaned.
 (function migrateEdits(){
   const numeric = Object.keys(edits).filter(function(k){ return /^\d+$/.test(k); });
   if (!numeric.length) return;
@@ -748,6 +751,51 @@ let extras = load("extras") || [];
   });
   try { save("edits", edits); } catch (err) {}
 })();
+// AN EDIT WHOSE BILL HAS MOVED IS STILL HER EDIT. Edits are keyed `date|name`,
+// so when a rules update changes a bill's date the edit stops matching anything
+// and silently stops applying. That is how a real skip vanished: the bill came
+// back into the total without a word, after a share had already been sent that
+// was calculated with it removed.
+//
+// A rules update is allowed to move a bill. It is not allowed to discard what
+// she said about it and change what somebody is owed, in silence.
+//
+// Conservative on purpose: exactly one event with that name, or nothing.
+// Choosing between two candidates would be inventing a statement she never made.
+let orphanNote = "";
+function rematchEdits(){
+  if (!D || !D.events) return;
+  const live = {};
+  D.events.forEach(function(e){ live[e.d + "|" + e.n] = true; });
+  const orphans = Object.keys(edits).filter(function(k){ return !live[k]; });
+  if (!orphans.length) { orphanNote = ""; return; }
+  const moved = [], lost = [];
+  orphans.forEach(function(k){
+    const name = k.slice(k.indexOf("|") + 1);
+    const hits = D.events.filter(function(e){ return e.n === name; });
+    if (hits.length === 1) {
+      const nk = hits[0].d + "|" + hits[0].n;
+      if (!edits[nk]) { edits[nk] = edits[k]; moved.push(name); }
+      delete edits[k];
+    } else {
+      lost.push(name);
+    }
+  });
+  try { save("edits", edits); } catch (e) {}
+  const bits = [];
+  if (moved.length) {
+    bits.push("Your change to " + moved.join(", ") + " followed it to a new "
+            + "date.");
+  }
+  if (lost.length) {
+    bits.push("Your change to " + lost.join(", ") + " no longer matches "
+            + "anything in this month, so it is not being counted. Check the "
+            + "figures before sending anyone money.");
+  }
+  orphanNote = bits.join(" ");
+}
+
+try { rematchEdits(); } catch (e) {}
 let openRow = null;
 // WHICH event the open editor belongs to. Needed because render() rebuilds the
 // list and throws the editor away with it; without the key there is nothing to
@@ -1456,6 +1504,9 @@ function render(keepList){
   };
 
   const n = Object.keys(edits).length;
+  if (orphanNote) {
+    document.getElementById("changed").textContent = orphanNote;
+  } else
   document.getElementById("changed").textContent = n
     ? n + (n===1?" change":" changes") + " this cycle — they clear when the next one starts"
     : "Something cancelled, moved or a different amount? Tap it.";
@@ -1907,6 +1958,9 @@ async function refreshRules(){
   if (beforeKey === nowKey && !wasEmpty) return "unchanged";
   R = incoming;
   D = buildModel(R, today());
+  // THE MOMENT AN EDIT CAN BE ORPHANED. New rules may move a bill's date, and
+  // her edit is keyed to the old one.
+  try { rematchEdits(); } catch (e) {}
   if (wasEmpty) { location.reload(); return "reloaded"; }
   render();
   const c = document.getElementById("changed");
