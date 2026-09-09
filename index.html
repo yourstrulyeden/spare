@@ -83,6 +83,13 @@
     <span class="k">Sent <b id="partnerName"></b> his <b id="partnerAmt"></b>?</span>
     <input type="checkbox" id="paidPartner" class="chk">
   </div>
+  <div class="ed" id="paidAsk" style="display:none">
+    <div class="note" style="margin:0 0 8px">You have marked his share as sent,
+    but I do not know how much. Put it in and I will tell you if it changes.</div>
+    <div class="f"><input id="paidAmtIn" type="text" inputmode="decimal"
+      placeholder="0.00"><button id="paidAmtGo">Save</button></div>
+    <div class="note" id="paidAskMsg"></div>
+  </div>
   <div class="ed" id="balSuggest" style="display:none">
     <div class="note" id="balSuggestWhy" style="margin:0 0 8px"></div>
     <div class="b"><button id="balYes"></button>
@@ -1202,6 +1209,14 @@ function render(keepList){
     // tick still on, saying nothing.
     if (paid) {
       const sent = load("paidAmt");
+      // ASK RATHER THAN GUESS. A box ticked before this field existed leaves
+      // nothing to compare against, and the block below simply went quiet - so
+      // Eden found a 6.39 overpayment by reading two numbers herself. Filling
+      // it in with his CURRENT share would silence the warning by asserting she
+      // sent exactly the right amount, which is the one thing known to be
+      // false. One question, once, and it works from then on.
+      const ask = document.getElementById("paidAsk");
+      if (ask) ask.style.display = (typeof sent === "number") ? "none" : "";
       if (typeof sent === "number") {
         const owedNow = Math.max(hisNow, 0);
         const diff = Math.round((owedNow - sent) * 100) / 100;
@@ -1218,6 +1233,10 @@ function render(keepList){
               + why;
         }
       }
+    }
+    if (!paid) {
+      const ask0 = document.getElementById("paidAsk");
+      if (ask0) ask0.style.display = "none";
     }
     if (!balAfterPaying) {
       why = "⚠ you have marked " + P + "'s share as sent, but this balance is "
@@ -1918,6 +1937,24 @@ window.__rulesRefresh = refreshRules;
     render();
   };
   no.onclick = function () { save("suggest", null); render(); };
+})();
+
+
+// "What did you send him?" - the answer the app cannot work out for itself.
+(function paidAmtBox(){
+  const go = document.getElementById("paidAmtGo");
+  if (!go) return;
+  go.onclick = function () {
+    const el = document.getElementById("paidAmtIn");
+    const msg = document.getElementById("paidAskMsg");
+    const got = readAmount(el.value, false);
+    if (got.msg) { msg.textContent = got.msg; return; }
+    if (got.v === null) { msg.textContent = "Put the amount you sent in."; return; }
+    save("paidAmt", got.v);
+    msg.textContent = "";
+    document.getElementById("paidAsk").style.display = "none";
+    render();
+  };
 })();
 
 render();
