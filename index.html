@@ -262,6 +262,13 @@ function occurrences(it, frm, to){
     while (d < frm) d = addDays(d,28);
     while (d <= to) { out.push(d); d = addDays(d,28); }
   }
+  // AN END DATE, INCLUSIVE. Kept rather than deleted so a last occurrence
+  // already paid inside a running cycle still counts. Must match schedule.py
+  // exactly - test_schedule walks both for a year.
+  if (it.u) {
+    const last = new Date(it.u + "T00:00:00Z");
+    return out.filter(d => d <= last);
+  }
   return out;
 }
 
@@ -467,21 +474,29 @@ function installed(){
       const wide = what === "income";
       const got = (chunk ? chunk.split(";") : []).map(r => {
         const p = r.split(",");
-        if (p.length !== 4 && p.length !== 5) {
+        if (p.length < 4 || p.length > (wide ? 5 : 6)) {
           throw new Error("a " + what + " line has " + p.length
-                        + " fields, not 4 or 5.");
+                        + " fields, not 4 to " + (wide ? 5 : 6) + ".");
         }
         if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
         const row = {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
-        if (p.length === 5) {
+        if (p.length >= 5) {
           // A BILL's 5th field is a NUMBER - the part of it that is the
           // partner's and is always spent. An INCOME's is a letter, saying
           // whose money the line is. Telling them apart by shape keeps one
           // format for both kinds of row.
+          // EMPTY IS NOT ZERO. +"" is 0 and isFinite(0) is true, so a bill
+          // carrying only an end date would otherwise gain a fixed portion of
+          // nothing - harmless today, and exactly the kind of quiet shape
+          // change a later rule would trip over.
           if (wide) row.t = p[4] || "j";
-          else if (isFinite(+p[4])) row.f = +p[4];
+          else if (p[4] !== "" && isFinite(+p[4])) row.f = +p[4];
         } else if (wide) {
           row.t = "j";
+        }
+        // A BILL's 6th field is the last date it occurs, inclusive.
+        if (!wide && p.length === 6 && /^\d{4}-\d{2}-\d{2}$/.test(p[5])) {
+          row.u = p[5];
         }
         return row;
       });
