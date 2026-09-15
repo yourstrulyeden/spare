@@ -855,6 +855,14 @@ let openKey = null;
 // evidence a bill had changed permanently.
 function editKey(e){ return e.d + "|" + e.n; }
 
+// IS THERE ANYTHING LEFT OF THIS EDIT? ONE answer, used by every button. Each
+// button had its own copy and they disagreed: undoing "Didn't happen" checked
+// skip, amount and date but not "gone", so gone out -> didn't happen -> undo
+// deleted the whole edit and took the gone-out tick with it.
+function emptyEdit(x){
+  return !x || (!x.skip && !x.gone && x.amount == null && !x.date && !x.by);
+}
+
 function eventsNow(){
   const fromRules = D.events.map((e,i) => {
     // NO INDEX FALLBACK. It was meant as a migration and behaved as a permanent
@@ -875,7 +883,12 @@ function eventsNow(){
                   : e.a),
             n: e.n, skip: !!ed.skip, edited: ed.amount!=null, moved: !!ed.date,
             goneOut: !!ed.gone,
-            w: e.w,
+            // ONE OF THEM COVERED THIS ONE. A joint bill paid by one person alone
+            // this time comes off that share only - the same path as a bill that
+            // is always theirs. Never on rent, whose split part is not the whole
+            // payment, and never on income.
+            by: (ed.by && e.n !== "Rent" && e.a < 0) ? ed.by : null,
+            w: (ed.by && e.n !== "Rent" && e.a < 0) ? ed.by : e.w,
             orig: e.a};
   });
   // One-offs sit in the same list and count the same way. Only ones inside this
@@ -1694,6 +1707,13 @@ function openEditor(i, rowEl, force){
     + '<button id="eGone" class="' + (ed.gone?"on":"") + '">'
     + (ed.gone ? "Gone out \u2713" : "Gone out") + '</button>'
     + '<button id="eReset">Reset</button></div>'
+    // Only on a JOINT bill - one that is already one person's has nobody else
+    // to have paid it, and rent's split part is not the payment.
+    + ((e.w || e.n === "Rent" || e.a > 0) ? ''
+       : '<div class="b"><button id="eByE" class="' + (ed.by === "e" ? "on" : "")
+         + '">Only I paid this</button><button id="eByA" class="'
+         + (ed.by === "a" ? "on" : "") + '">Only ' + esc(D.partner || "they")
+         + ' paid this</button></div>')
     + '<div class="f"><input id="eAmt" type="text" inputmode="decimal" placeholder="'
     + Math.abs(e.a).toFixed(2) + '" value="' + (ed.amount!=null?ed.amount:"") + '">'
     + '<input id="eDate" type="date" value="' + (ed.date || e.d) + '"></div>'
@@ -1717,8 +1737,7 @@ function openEditor(i, rowEl, force){
     edits[i] = edits[i] || {};
     edits[i].gone = !edits[i].gone;
     const nowGone = edits[i].gone;
-    if (!edits[i].skip && !edits[i].gone && edits[i].amount == null
-        && !edits[i].date) delete edits[i];
+    if (emptyEdit(edits[i])) delete edits[i];
     const amt = e.skip ? 0 : (edits[i] && edits[i].amount != null
                               ? -Math.abs(edits[i].amount) : e.a);
     if (nowGone && amt) suggestBalance(amt, e.n);
@@ -1726,12 +1745,23 @@ function openEditor(i, rowEl, force){
   };
   document.getElementById("eSkip").onclick = () => {
     edits[i] = edits[i] || {}; edits[i].skip = !edits[i].skip;
-    if (!edits[i].skip && !edits[i].amount && !edits[i].date) delete edits[i];
+    if (emptyEdit(edits[i])) delete edits[i];
     box.remove(); openRow = null; openKey = null; render();
   };
   document.getElementById("eReset").onclick = () => {
     delete edits[i]; box.remove(); openRow = null; openKey = null; render();
   };
+  // Tapping the one already on turns it off, so she can always get back to split.
+  [["eByE", "e"], ["eByA", "a"]].forEach(function(pair){
+    const b = document.getElementById(pair[0]);
+    if (!b) return;
+    b.onclick = () => {
+      edits[i] = edits[i] || {};
+      if (edits[i].by === pair[1]) delete edits[i].by; else edits[i].by = pair[1];
+      if (emptyEdit(edits[i])) delete edits[i];
+      box.remove(); openRow = null; openKey = null; render();
+    };
+  });
   // Whether the last keystroke was REJECTED. It decides whether `change` is
   // allowed to do a full render - because a full render reopens the editor as
   // a fresh node, which wipes the very message explaining the rejection. The
@@ -1751,7 +1781,7 @@ function openEditor(i, rowEl, force){
     }
     say(msg);
     refused = !!msg;
-    if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
+    if (emptyEdit(edits[i])) delete edits[i];
     // keepList: DO NOT rebuild the list under her finger. That is what
     // destroyed this very input on the first keystroke.
     render(true);
@@ -1768,7 +1798,7 @@ function openEditor(i, rowEl, force){
     edits[i] = edits[i] || {};
     const v = ev2.target.value;
     if (v && v !== e.d) edits[i].date = v; else delete edits[i].date;
-    if (!edits[i].skip && edits[i].amount==null && !edits[i].date) delete edits[i];
+    if (emptyEdit(edits[i])) delete edits[i];
     // MOVING IT OUT OF THE CYCLE IS ALLOWED AND IS NOT SILENT. "It went out
     // next month instead" is a true thing to tell the app and the total is
     // right to drop it - what was wrong is that it happened without a word
@@ -1812,7 +1842,7 @@ function changeItems(){
     // bug: an event carrying only a tick fell through to the orphan list and
     // told her a bill she had just watched leave "no longer matches anything
     // this month", under a message about not sending anyone money.
-    if (!(e.skip || e.edited || e.moved || e.goneOut)) return;
+    if (!(e.skip || e.edited || e.moved || e.goneOut || e.by)) return;
     seen[e.i] = 1;
     // THE ORIGINAL DATE IS IN THE KEY. `e.d` is where the bill sits AFTER her
     // move, so a message built only from that loses the date it moved from -
@@ -1826,6 +1856,11 @@ function changeItems(){
     if (e.goneOut) { long.push("ticked off as gone out");
                      short.push("gone out"); }
     if (e.skip) { long.push("didn't happen"); short.push("not happening"); }
+    if (e.by) {
+      const who = e.by === "e" ? "me" : (D.partner || "them");
+      long.push("paid by " + who + " alone, not split");
+      short.push(who + " alone");
+    }
     if (e.edited) {
       long.push("was " + gbp(Math.abs(e.orig)) + ", actually " + gbp(Math.abs(e.a)));
       short.push(gbp(Math.abs(e.a)) + " instead of " + gbp(Math.abs(e.orig)));
@@ -1837,7 +1872,7 @@ function changeItems(){
     applied.push({n: e.n, d: was, at: e.d,
                   // a tick is a fact about this month and says nothing about
                   // whether the RULES should change, so the email keeps it apart
-                  tick: !!(e.goneOut && !e.skip && !e.edited && !e.moved),
+                  tick: !!(e.goneOut && !e.skip && !e.edited && !e.moved && !e.by),
                   what: short.join(", "), text: long.join(", ")});
   });
   // Anything left in `edits` that no event answered to. These are the ones that
