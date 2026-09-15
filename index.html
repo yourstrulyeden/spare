@@ -296,7 +296,12 @@ function buildModel(R, todayISO){
     const add = function(it, sign){
       occurrences(it, a1, b1).forEach(function(d){
         const s = ymd(d);
-        if (s >= cutoff) out.push({d: s, a: sign * it.a, n: it.n});
+        if (s >= cutoff) {
+          const ev1 = {d: s, a: sign * it.a, n: it.n};
+          // WHOSE ALONE. Only present on a bill one of them pays for alone.
+          if (it.w) ev1.w = it.w;
+          out.push(ev1);
+        }
       });
     };
     R.bills.forEach(function(it){ add(it, -1); });
@@ -319,12 +324,20 @@ function buildModel(R, todayISO){
   // The BILL TOTAL is the budget figure and covers the whole cycle, whatever
   // the projection window is. Rent counts at Eden's £25 share here: the other
   // the rest is the fixed part that was never either of theirs.
-  let bills = 0;
+  // A BILL ONE OF THEM PAYS ALONE (`w`) is not a bill to split. It still leaves
+  // her account on its day, so it stays in the events; it comes off that
+  // person's share instead of being divided by income.
+  let bills = 0, ownE = 0, ownP = 0;
   R.bills.forEach(function(it){
     const amt = it.n === "Rent" ? R.rentSplit : it.a;
-    bills += amt * occurrences(it, a, b).length;
+    const tot = amt * occurrences(it, a, b).length;
+    if (it.w === "e") ownE += tot;
+    else if (it.w === "a") ownP += tot;
+    else bills += tot;
   });
   bills = Math.round(bills*100)/100;
+  ownE = Math.round(ownE*100)/100;
+  ownP = Math.round(ownP*100)/100;
 
   const pot = R.hers + R.his, spare = pot - bills;
   // The two income lines by POSITION, not by name. Naming them would put Eden's
@@ -352,11 +365,11 @@ function buildModel(R, todayISO){
   });
 
   return {
-    hers: R.hers, his: R.his, bills: bills,
+    hers: R.hers, his: R.his, bills: bills, ownE: ownE, ownP: ownP,
     owner: owner, fixedFor: fixedFor,
     herJoint: R.hers - herOwn, hisJoint: R.his - hisOwn,
-    herSpare: Math.round(spare * R.hers / pot * 100)/100,
-    hisSpare: Math.round(spare * R.his  / pot * 100)/100,
+    herSpare: Math.round((spare * R.hers / pot - ownE) * 100)/100,
+    hisSpare: Math.round((spare * R.his  / pot - ownP) * 100)/100,
     cycleStart: ymd(a), cycleEnd: ymd(b),
     inADate:  inA ? inA.d : ymd(a), inAAmount:  inA ? inA.a : 0,
     inBDate: inB ? inB.d : ymd(b), inBAmount: inB ? inB.a : 0,
@@ -474,9 +487,9 @@ function installed(){
       const wide = what === "income";
       const got = (chunk ? chunk.split(";") : []).map(r => {
         const p = r.split(",");
-        if (p.length < 4 || p.length > (wide ? 5 : 6)) {
+        if (p.length < 4 || p.length > (wide ? 5 : 7)) {
           throw new Error("a " + what + " line has " + p.length
-                        + " fields, not 4 to " + (wide ? 5 : 6) + ".");
+                        + " fields, not 4 to " + (wide ? 5 : 7) + ".");
         }
         if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
         const row = {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
@@ -495,8 +508,12 @@ function installed(){
           row.t = "j";
         }
         // A BILL's 6th field is the last date it occurs, inclusive.
-        if (!wide && p.length === 6 && /^\d{4}-\d{2}-\d{2}$/.test(p[5])) {
+        if (!wide && p.length >= 6 && /^\d{4}-\d{2}-\d{2}$/.test(p[5])) {
           row.u = p[5];
+        }
+        // A BILL's 7th field is whose alone it is: e hers, a his.
+        if (!wide && p.length === 7 && (p[6] === "e" || p[6] === "a")) {
+          row.w = p[6];
         }
         return row;
       });
@@ -856,6 +873,7 @@ function eventsNow(){
                   : e.a),
             n: e.n, skip: !!ed.skip, edited: ed.amount!=null, moved: !!ed.date,
             goneOut: !!ed.gone,
+            w: e.w,
             orig: e.a};
   });
   // One-offs sit in the same list and count the same way. Only ones inside this
@@ -961,7 +979,7 @@ function render(keepList){
   // problem, which it is not.
   const rentRule = (R && R.bills || []).filter(function(b){ return b.n === "Rent"; })[0];
   const housing = (rentRule && rentRule.a) ? (rentRule.a - R.rentSplit) : 0;
-  let billsNow = 0;
+  let billsNow = 0, ownENow = 0, ownPNow = 0;
   ev.forEach(function(e){
     if (e.extra || e.a >= 0) return;
     // ONLY WHAT FALLS INSIDE THE CYCLE. The event list deliberately reaches
@@ -971,6 +989,10 @@ function render(keepList){
     // list put 83 days a year wrong, by up to 466.86, and once showed her spare
     // as a negative number when she had 271.75.
     if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    // A BILL ONE OF THEM PAYS ALONE comes off that share only, with her edits
+    // applied - so skipping or correcting it moves only its owner's spare.
+    if (e.w === "e") { ownENow += -e.a; return; }
+    if (e.w === "a") { ownPNow += -e.a; return; }
     billsNow += (e.n === "Rent") ? Math.max((-e.a) - housing, 0) : (-e.a);
   });
   billsNow = Math.round(billsNow * 100) / 100;
@@ -1073,8 +1095,8 @@ function render(keepList){
   // is worth chasing in a budget she has to trust - the whole 30p investigation
   // was one.
 
-  const herNow = Math.round((herIn - billsNow * herShare + hersAlone) * 100) / 100;
-  const hisNow = Math.round((hisIn - billsNow * hisShare - hersAlone) * 100) / 100;
+  const herNow = Math.round((herIn - billsNow * herShare + hersAlone - ownENow) * 100) / 100;
+  const hisNow = Math.round((hisIn - billsNow * hisShare - hersAlone - ownPNow) * 100) / 100;
 
   // EVERYTHING AHEAD IS MEASURED FROM THE DAY THE BALANCE WAS TAKEN, not from
   // today. The balance she typed already contains everything that had happened
