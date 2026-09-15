@@ -65,6 +65,8 @@
   .ed button{flex:1;background:#171122;border:1px solid var(--line);color:var(--text);
              border-radius:11px;padding:12px 6px;font-size:13.5px}
   .ed button.on{background:var(--pop);color:#17101f;border-color:var(--pop);font-weight:700}
+  .s button.mini{display:block;margin:8px 0 6px;background:#171122;border:1px solid var(--line);
+                 color:var(--text);border-radius:11px;padding:9px 12px;font-size:13px}
   .ed .f{display:flex;gap:7px}
   .ed .f input{flex:1;background:#171122;border:1px solid var(--line);color:var(--text);
                border-radius:11px;padding:11px;font-size:15px;min-width:0}
@@ -1335,9 +1337,14 @@ function render(keepList){
       if (ask0) ask0.style.display = "none";
     }
     if (!balAfterPaying) {
+      // A WAY OUT THAT DOES NOT MEAN RETYPING. The flag is raised by the tick and
+      // lowered by typing in the balance box, so the ordinary order - check the
+      // bank, type the new balance, THEN tick - left it stuck on a balance that
+      // was already correct. Eden hit exactly that, 15 Sept 2026.
       why = "⚠ you have marked " + P + "'s share as sent, but this balance is "
           + "from before that. Update it above so it does not get counted "
-          + "twice. " + why;
+          + "twice. <button id=\"balFresh\" class=\"mini\">This balance is "
+          + "already after I sent it</button> " + why;
       note.className = "s warnc";
     }
     if (stale) {
@@ -1379,6 +1386,10 @@ function render(keepList){
       }
     }
     note.innerHTML = why;
+    // Only the transfer flag. The date the balance was read is left alone, so the
+    // separate "this balance is from <date>" warning still tells the truth.
+    const bf = document.getElementById("balFresh");
+    if (bf) bf.onclick = function () { save("balStale", false); render(); };
 
     // PACE, the Monzo idea: how much of the money is left against how much of the
     // cycle is left. Tells her she is running hot BEFORE the money is gone.
