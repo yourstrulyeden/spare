@@ -267,11 +267,19 @@ function occurrences(it, frm, to){
   // AN END DATE, INCLUSIVE. Kept rather than deleted so a last occurrence
   // already paid inside a running cycle still counts. Must match schedule.py
   // exactly - test_schedule walks both for a year.
+  let kept = out;
   if (it.u) {
     const last = new Date(it.u + "T00:00:00Z");
-    return out.filter(d => d <= last);
+    kept = kept.filter(d => d <= last);
   }
-  return out;
+  // A START DATE, INCLUSIVE - the mirror of the end date. A dated weekly anchor
+  // steps back to the window start, so without this a bill starting mid-cycle
+  // invented occurrences before it existed. Must match schedule.py exactly.
+  if (it.s) {
+    const first = new Date(it.s + "T00:00:00Z");
+    kept = kept.filter(d => d >= first);
+  }
+  return kept;
 }
 
 function buildModel(R, todayISO){
@@ -489,9 +497,9 @@ function installed(){
       const wide = what === "income";
       const got = (chunk ? chunk.split(";") : []).map(r => {
         const p = r.split(",");
-        if (p.length < 4 || p.length > (wide ? 5 : 7)) {
+        if (p.length < 4 || p.length > (wide ? 5 : 8)) {
           throw new Error("a " + what + " line has " + p.length
-                        + " fields, not 4 to " + (wide ? 5 : 7) + ".");
+                        + " fields, not 4 to " + (wide ? 5 : 8) + ".");
         }
         if (!isFinite(+p[1])) throw new Error("a " + what + " amount is not a number.");
         const row = {n: p[0].split("_").join(" "), a: +p[1], e: p[2], o: p[3]};
@@ -514,8 +522,12 @@ function installed(){
           row.u = p[5];
         }
         // A BILL's 7th field is whose alone it is: e hers, a his.
-        if (!wide && p.length === 7 && (p[6] === "e" || p[6] === "a")) {
+        if (!wide && p.length >= 7 && (p[6] === "e" || p[6] === "a")) {
           row.w = p[6];
+        }
+        // A BILL's 8th field is the first date it occurs, inclusive.
+        if (!wide && p.length === 8 && /^\d{4}-\d{2}-\d{2}$/.test(p[7])) {
+          row.s = p[7];
         }
         return row;
       });
