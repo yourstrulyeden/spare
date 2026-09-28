@@ -789,10 +789,22 @@ const save = (k,v) => localStorage.setItem(K+":"+k, JSON.stringify(v));
 
 // Per-event edits: {skip:true} | {amount:n} | {date:"YYYY-MM-DD"}
 let edits = load("edits") || {};
-// One-offs: money in or out that no rule generates. [{d, a, n}], a>0 is money
+// One-offs: money in or out that no rule generates. [{d, a, n, w}], a>0 is money
 // in. Deliberately NOT in `edits`: an edit says a recurring bill behaved
 // differently and might mean bills.json should change; a one-off says nothing
 // about the rules at all.
+//
+// `w` is WHOSE it is, and it is OPTIONAL so that every one-off saved before it
+// existed keeps behaving exactly as it did:
+//     absent / "e"   hers alone - the default. A vet bill, her resale money.
+//     "j"            joint, split by income
+//     "a"            his alone  (the partner's; his name lives in the rules, and
+//                                a literal one here would be PUBLISHED - this
+//                                comment ships inside the shell, and the gate
+//                                caught exactly that)
+// It borrows the `w` name the rule-generated events already use for `own`, so the
+// row renderer needs no new vocabulary. These live in localStorage only and never
+// travel in the rules, so the codec and rules.enc know nothing about any of it.
 let extras = load("extras") || [];
 
 // MIGRATE ONCE, THEN FORGET. Any edit still keyed by array position is moved
@@ -916,7 +928,8 @@ function eventsNow(){
   // cycle are shown, so an old one cannot quietly go on affecting the maths.
   const mine = extras.map((x,j) => ({i: "x"+j, d: x.d, a: x.a, n: x.n,
                                      skip: false, edited: false, moved: false,
-                                     extra: true, orig: x.a}))
+                                     extra: true, orig: x.a,
+                                     w: (x.w === "j" || x.w === "a") ? x.w : null}))
                      .filter(x => x.d >= D.cycleStart && x.d <= D.cycleEnd);
   return fromRules.concat(mine)
     .sort((a,b) => a.d < b.d ? -1 : a.d > b.d ? 1 : b.a - a.a);
@@ -1200,13 +1213,25 @@ function render(keepList){
   // Money OUT comes off it too. A vet bill is not a household bill for the two
   // of them to divide, so it is hers to absorb, and a figure that only ever
   // moves upwards is one she cannot trust.
-  let oneOffs = 0;
+  // WHOSE one-off. Hers is the default and always was; "j" is split by income
+  // and "a" is his alone. The BALANCE is untouched by this - the money leaves her
+  // account on its day whoever it belonged to - so only the two spare figures
+  // below change.
+  let oneOffsHer = 0, oneOffsJoint = 0, oneOffsHis = 0;
   ev.forEach(function(e){
     if (!e.extra) return;
     if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
-    oneOffs += e.a;
+    if (e.w === "j") { oneOffsJoint += e.a; return; }
+    if (e.w === "a") { oneOffsHis += e.a; return; }
+    oneOffsHer += e.a;
   });
-  oneOffs = Math.round(oneOffs * 100) / 100;
+  oneOffsHer   = Math.round(oneOffsHer * 100) / 100;
+  oneOffsJoint = Math.round(oneOffsJoint * 100) / 100;
+  oneOffsHis   = Math.round(oneOffsHis * 100) / 100;
+  // What each of them actually carries. Rounded once, here, so the headline and
+  // the pace bar cannot disagree about a half penny.
+  const oneOffs    = Math.round((oneOffsHer + oneOffsJoint * herShare) * 100) / 100;
+  const oneOffsHim = Math.round((oneOffsHis + oneOffsJoint * hisShare) * 100) / 100;
 
   // ---- CARRY-OVER ----------------------------------------------------
   // The baked figure belongs to the cycle it was MEASURED for. Past that it is
@@ -1286,7 +1311,7 @@ function render(keepList){
   };
 
   document.getElementById("herSpare").textContent = gbp(herNow + carry + oneOffs);
-  document.getElementById("hisSpare").textContent = gbp(hisNow);
+  document.getElementById("hisSpare").textContent = gbp(hisNow + oneOffsHim);
   document.getElementById("bills").textContent   = gbp(billsNow);
   document.getElementById("toGo").textContent    = gbp(-out);
   document.getElementById("toCome").textContent  = gbp(inn);
@@ -1519,6 +1544,8 @@ function render(keepList){
       + (gone?'<span class="tag">not this cycle</span>'
              :(e.moved?'<span class="tag">moved</span>':""))
       + (e.extra?'<span class="tag">one-off</span>':"")
+      + (e.extra && e.w === "j" ?'<span class="tag">split</span>':"")
+      + (e.extra && e.w === "a" ?'<span class="tag">' + esc(P) + "'s</span>":"")
       + (e.skip?'<span class="tag">skipped</span>':"")
       + (e.goneOut?'<span class="tag">gone out</span>':"") + "</span>"
       + '<span class="v' + (e.orig>0?" pos":"") + '">'
@@ -1557,6 +1584,10 @@ function render(keepList){
     + '<div class="f"><input id="xName" placeholder="what is it?" '
     + 'style="flex:2"><input id="xAmt" inputmode="decimal" placeholder="0.00" '
     + 'style="flex:1"></div>'
+    + '<div class="b" style="margin-top:7px">'
+    + '<button id="whoMe" class="on">Just me</button>'
+    + '<button id="whoJoint">Split by income</button>'
+    + '<button id="whoThem">Just ' + esc(P) + '</button></div>'
     + '<div class="f" style="margin-top:7px">'
     + '<input id="xDate" type="date" style="flex:2">'
     + '<button id="xAdd" style="flex:1;background:var(--pop);color:#17101f;'
@@ -1570,6 +1601,20 @@ function render(keepList){
   const dIn = document.getElementById("dirIn"), dOut = document.getElementById("dirOut");
   dIn.onclick  = () => { dir = 1;  dIn.className = "on"; dOut.className = ""; };
   dOut.onclick = () => { dir = -1; dOut.className = "on"; dIn.className = ""; };
+  // WHOSE. null means hers, which is what every one-off was before this existed.
+  let who = null;
+  const wMe = document.getElementById("whoMe"),
+        wJt = document.getElementById("whoJoint"),
+        wTh = document.getElementById("whoThem");
+  const setWho = v => {
+    who = v;
+    wMe.className = v === null ? "on" : "";
+    wJt.className = v === "j" ? "on" : "";
+    wTh.className = v === "a" ? "on" : "";
+  };
+  wMe.onclick = () => setWho(null);
+  wJt.onclick = () => setWho("j");
+  wTh.onclick = () => setWho("a");
   document.getElementById("addBtn").onclick = () => {
     const f = document.getElementById("addForm");
     f.style.display = f.style.display === "none" ? "" : "none";
@@ -1614,7 +1659,11 @@ function render(keepList){
           + "cycle rather than this one.";
       return;
     }
-    extras.push({d: dt2, a: dir * Math.abs(amt), n: nm});
+    // Only write `w` when it is not the default, so her stored one-offs stay the
+    // shape they have always been unless she actually chose otherwise.
+    const rec = {d: dt2, a: dir * Math.abs(amt), n: nm};
+    if (who) rec.w = who;
+    extras.push(rec);
     save("extras", extras);
     // OFFER the balance change for a one-off that has already happened. If it
     // is still ahead the balance should NOT include it yet, so there is nothing
@@ -1704,9 +1753,30 @@ function openEditor(i, rowEl, force){
     if (openRow) { openRow.remove(); openRow = null; }
     const b = document.createElement("div");
     b.className = "ed";
-    b.innerHTML = '<div class="b"><button id="xDel">Remove this one-off</button></div>';
+    // Whose it is, changeable in place. Getting this wrong and having to delete
+    // and re-type the whole thing is the sort of small friction that stops her
+    // recording a one-off at all.
+    const xj = Number(String(i).slice(1));
+    const cur = (extras[xj] && (extras[xj].w === "j" || extras[xj].w === "a"))
+                ? extras[xj].w : null;
+    b.innerHTML =
+      '<div class="b">'
+      + '<button id="xWMe" class="' + (cur === null ? "on" : "") + '">Just me</button>'
+      + '<button id="xWJt" class="' + (cur === "j" ? "on" : "") + '">Split</button>'
+      + '<button id="xWTh" class="' + (cur === "a" ? "on" : "") + '">' + esc(P) + '</button>'
+      + '</div>'
+      + '<div class="b"><button id="xDel">Remove this one-off</button></div>';
     rowEl.parentNode.insertBefore(b, rowEl.nextSibling);
     openRow = b; openKey = null;
+    const setX = v => {
+      if (!extras[xj]) return;
+      if (v) { extras[xj].w = v; } else { delete extras[xj].w; }
+      save("extras", extras);
+      render();
+    };
+    document.getElementById("xWMe").onclick = () => setX(null);
+    document.getElementById("xWJt").onclick = () => setX("j");
+    document.getElementById("xWTh").onclick = () => setX("a");
     document.getElementById("xDel").onclick = () => removeExtra(i);
     return;
   }
