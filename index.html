@@ -96,12 +96,13 @@
   <label for="bal">Balance right now</label>
   <input id="bal" type="text" inputmode="decimal" placeholder="0.00">
   <div class="row" id="partnerRow" style="border:0;padding-bottom:0">
-    <span class="k">Sent <b id="partnerName"></b> his <b id="partnerAmt"></b>?</span>
+    <span class="k">Sent <b id="partnerName"></b> <span id="partnerWord">his</span> <b id="partnerAmt"></b>?</span>
     <input type="checkbox" id="paidPartner" class="chk">
   </div>
+  <div class="s"><button id="sentSome" class="mini" style="display:none">Put in what you've already sent</button></div>
   <div class="ed" id="paidAsk" style="display:none">
-    <div class="note" style="margin:0 0 8px">You have marked his share as sent,
-    but I do not know how much. Put it in and I will tell you if it changes.</div>
+    <div class="note" style="margin:0 0 8px">How much have you sent him so far
+    this month, all together? Put it in and I will work out what is left.</div>
     <div class="f"><input id="paidAmtIn" type="text" inputmode="decimal"
       placeholder="0.00"><button id="paidAmtGo">Save</button></div>
     <div class="note" id="paidAskMsg"></div>
@@ -1079,6 +1080,59 @@ function renderSuggestion(){
   document.getElementById("balYes").textContent = "Yes, make it " + gbp(s.to);
 }
 
+// His full share as of the last render, for the tick and the "sent the rest"
+// button - which must record his WHOLE share, not whatever the label shows (the
+// label shows only what is left once something has been sent).
+let lastShare = 0;
+// Whether she has opened the "what have you sent" box herself.
+let askOpen = false;
+
+// MOVED INTO NEXT MONTH = A ONE-OFF IN NEXT MONTH. A move past the cycle end
+// drops the bill from this month's total, which is right - but nothing told next
+// month it existed, so it vanished from BOTH. Eden, 1 Oct 2026: the 7 Oct food
+// shop moved to the 9th and a session moved to the 12th, 135 in October that
+// October knew nothing about. Each such move now has exactly one carried one-off
+// in next month's list, with the bill's owner; a reset or a move back removes
+// it. Reconciled rather than hooked to the date box, so moves made before this
+// existed are carried too. Idempotent. Rent is never carried: its share in the
+// split is not its amount.
+// The last day of NEXT month's cycle, as ISO.
+function nextCycleEnd(){
+  return ymd(currentCycle(addDays(new Date(D.cycleEnd + "T00:00:00Z"), 1))[1]);
+}
+function reconcileCarried(){
+  try {
+    const NKX = "spare:" + ymd(addDays(new Date(D.cycleEnd + "T00:00:00Z"), 1)) + ":extras";
+    let nx = [];
+    try { nx = JSON.parse(localStorage.getItem(NKX)) || []; } catch (e) { nx = []; }
+    if (!Array.isArray(nx)) nx = [];
+    // ONLY AS FAR AS NEXT MONTH. That is the one future cycle whose list is kept
+    // (the sweep spares it). A move further out would be carried into a list
+    // whose own month it is not in - invisible there, and swept later.
+    const nextEnd = nextCycleEnd();
+    const want = [];
+    D.events.forEach(function(e){
+      if (e.a >= 0 || e.n === "Rent") return;
+      const k = editKey(e), ed = edits[k];
+      if (!ed || !ed.date || ed.skip || ed.date <= D.cycleEnd || ed.date > nextEnd) return;
+      const amt = typeof ed.amount === "number" ? Math.abs(ed.amount) : Math.abs(e.a);
+      const rec = {d: ed.date, a: -Math.round(amt * 100) / 100,
+                   n: e.n + " (moved from " + nice(e.d) + ")", carried: k};
+      // WHOSE, in the one-off vocabulary: a bill one of them pays alone keeps
+      // that owner (hers needs no field); a shared bill is split by income.
+      const who = ed.by || e.w;
+      if (who === "a") rec.w = "a";
+      else if (who !== "e") rec.w = "j";
+      want.push(rec);
+    });
+    const now = nx.filter(function(x){ return !(x && x.carried); }).concat(want);
+    if (JSON.stringify(now) !== JSON.stringify(nx)) {
+      if (now.length) localStorage.setItem(NKX, JSON.stringify(now));
+      else localStorage.removeItem(NKX);
+    }
+  } catch (err) {}
+}
+
 function render(keepList){
   const t = today();
   // THE BALANCE GOES THROUGH THE SAME PARSER. A negative IS allowed here and
@@ -1263,10 +1317,30 @@ function render(keepList){
   // NEVER HOLD BACK A NEGATIVE. If bills exceed the pot his share goes negative,
   // and subtracting a negative ADDS it - one mistyped amount turned an overdraft
   // into 642 of extra "safe to spend". A share that does not exist is zero.
-  const owedPartner = (incomeLanded && !paid) ? Math.max(hisNow, 0) : 0;
+  // WHAT SHE STILL HOLDS THAT IS HIS: his share less what she has already sent
+  // him this cycle, ticked or not. The tick used to zero this outright, so when
+  // a bill moved after she had paid him and his share grew, the note said "X
+  // still to go" while safe-to-spend counted X as hers. The one case still left
+  // at nothing is a tick with no amount on record - asked about below, not
+  // guessed.
+  const sentSoFar = load("paidAmt");
+  const hasSent = typeof sentSoFar === "number";
+  const shareNow = Math.max(hisNow, 0);
+  lastShare = shareNow;
+  const owedPartner = !incomeLanded ? 0
+    : (paid && !hasSent) ? 0
+    : Math.max(Math.round((shareNow - (hasSent ? sentSoFar : 0)) * 100) / 100, 0);
 
   document.getElementById("cycle").textContent = nice(D.cycleStart)+" – "+nice(D.cycleEnd);
-  document.getElementById("partnerAmt").textContent = gbp(Math.max(hisNow, 0));
+  // SOME ALREADY SENT, NOT ALL: the row asks about what is LEFT, so ticking it
+  // means "and now the rest" rather than looking like a second whole payment.
+  const partial = !paid && hasSent && sentSoFar > 0.005;
+  document.getElementById("partnerAmt").textContent =
+    gbp(partial ? Math.max(shareNow - sentSoFar, 0) : shareNow);
+  const pw = document.getElementById("partnerWord");
+  if (pw) pw.textContent = partial ? "the rest of his" : "his";
+  const ssb = document.getElementById("sentSome");
+  if (ssb) ssb.style.display = paid ? "none" : "";
   const an = document.getElementById("partnerName");
   if (an) an.textContent = P;
   const an2 = document.getElementById("partnerName2");
@@ -1467,10 +1541,14 @@ function render(keepList){
         const owedNow = Math.max(hisNow, 0);
         const diff = Math.round((owedNow - sent) * 100) / 100;
         if (diff > 0.005) {
+          // AND THE BUTTON THAT WAS MISSING. Without it the only way to say
+          // the rest had gone was untick-and-retick, which threw the record
+          // away (Eden, 1 Oct 2026).
           why = "⚠ since you marked " + P + "'s share as sent, a bill has come "
               + "off and his share has grown. You have sent " + gbp(sent)
               + " and it is now " + gbp(owedNow) + " — " + gbp(diff)
-              + " still to go. " + why;
+              + " still to go. <button id=\"sentRest\" class=\"mini\">I've sent the "
+              + gbp(diff) + "</button> " + why;
           note.className = "s warnc";
         } else if (diff < -0.005) {
           why = "Since you marked " + P + "'s share as sent his share has "
@@ -1482,7 +1560,19 @@ function render(keepList){
     }
     if (!paid) {
       const ask0 = document.getElementById("paidAsk");
-      if (ask0) ask0.style.display = "none";
+      if (ask0) ask0.style.display = askOpen ? "" : "none";
+      // UNTICKED, BUT SOME HAS GONE: say how much, and what is left, so the
+      // number she needs is on screen whatever state the tick is in.
+      if (hasSent && sentSoFar > 0.005) {
+        const left = Math.round((shareNow - sentSoFar) * 100) / 100;
+        why = "You have sent " + P + " " + gbp(sentSoFar) + " so far this month"
+            + (left > 0.005 ? " — " + gbp(left) + " of his " + gbp(shareNow)
+                              + " still to go. "
+               : left < -0.005 ? ", which is " + gbp(-left) + " more than his "
+                              + "share - that is yours back. "
+               : ", which is all of it. ")
+            + why;
+      }
     }
     if (!balAfterPaying) {
       // A WAY OUT THAT DOES NOT MEAN RETYPING. The flag is raised by the tick and
@@ -1538,6 +1628,15 @@ function render(keepList){
     // separate "this balance is from <date>" warning still tells the truth.
     const bf = document.getElementById("balFresh");
     if (bf) bf.onclick = function () { save("balStale", false); render(); };
+    const sr = document.getElementById("sentRest");
+    if (sr) sr.onclick = function () {
+      const was = load("paidAmt");
+      save("paidAmtBefore", typeof was === "number" ? was : null);
+      save("paidAmt", Math.round(lastShare * 100) / 100);
+      // Money has just left, so the balance on screen is from before it went.
+      save("balStale", true);
+      render();
+    };
 
     // PACE, the Monzo idea: how much of the money is left against how much of the
     // cycle is left. Tells her she is running hot BEFORE the money is gone.
@@ -1814,6 +1913,7 @@ function render(keepList){
   document.getElementById("sendBox").style.display = (n || nExtra) ? "" : "none";
   renderSuggestion();
   save("edits", edits);
+  reconcileCarried();
 }
 
 function removeExtra(i){
@@ -1966,8 +2066,20 @@ function openEditor(i, rowEl, force){
   // explanation with it.
   document.getElementById("eAmt").onchange = () => { if (!refused) render(); };
   document.getElementById("eDate").onchange = ev2 => {
-    edits[i] = edits[i] || {};
     const v = ev2.target.value;
+    // NOT INTO A MONTH THAT IS ALREADY OVER. A date before this cycle began
+    // silently dropped the bill out of the total and overstated her spare by
+    // it - Eden picked 2 September for her food when she meant 2 October.
+    // Refused, with the date she most likely meant, and nothing saved.
+    if (v && v < D.cycleStart) {
+      const g = new Date(v + "T00:00:00Z");
+      g.setUTCMonth(g.getUTCMonth() + 1);
+      say("That is " + nice(v) + ", before this month started on "
+          + nice(D.cycleStart) + " - did you mean " + nice(ymd(g)) + "?");
+      ev2.target.value = (edits[i] && edits[i].date) || e.d;
+      return;
+    }
+    edits[i] = edits[i] || {};
     if (v && v !== e.d) edits[i].date = v; else delete edits[i].date;
     if (emptyEdit(edits[i])) delete edits[i];
     // MOVING IT OUT OF THE CYCLE IS ALLOWED AND IS NOT SILENT. "It went out
@@ -1975,12 +2087,20 @@ function openEditor(i, rowEl, force){
     // right to drop it - what was wrong is that it happened without a word
     // while the row still showed the full amount as a live cost. Now the row
     // is tagged "not this cycle" and this says so out loud.
-    const out = v && (v < D.cycleStart || v > D.cycleEnd);
+    const out = v && v > D.cycleEnd;
+    const far = out && v > nextCycleEnd();
     box.remove(); openRow = null; openKey = null; render();
     if (out) {
       const c = document.getElementById("changed");
-      if (c) c.textContent = e.n + " moved to " + nice(v)
-           + ", which is outside this cycle - it has come out of the total.";
+      // A year on a date that is not this year, or "15 Sept" reads as THIS one.
+      const when = nice(v) + (v.slice(0, 4) !== D.cycleEnd.slice(0, 4)
+                              ? " " + v.slice(0, 4) : "");
+      if (c) c.textContent = far
+        ? e.n + " moved to " + when + ", which is after next month - it has come "
+          + "out of this month's total, but nothing carries that far ahead, so "
+          + "add it again nearer the time."
+        : e.n + " moved to " + when + ", which is next month - it has come out "
+          + "of this month's total and been added to next month's.";
     }
   };
 }
@@ -2134,12 +2254,20 @@ paid.addEventListener("change", () => {
   // it said AT THE TIME", so that figure is the thing to compare against later.
   // Without it, freeing a bill afterwards raised the ask in silence and she had
   // no way to know she was short.
+  // TICKING = "he has had all of it": record his WHOLE share (not the label,
+  // which shows only what is left once some has gone), and remember what was on
+  // record first so an untick can put it back.
+  // UNTICKING UNDOES THE TICK. It used to ERASE the record, so the app forgot
+  // she had sent him anything and went back to "he is owed the whole month" -
+  // Eden: "now its gone so idk how much i owe him anymore", 1 Oct 2026.
   if (paid.checked) {
-    const shown = (document.getElementById("partnerAmt").textContent || "")
-      .replace(/[^0-9.]/g, "");
-    save("paidAmt", shown === "" ? null : parseFloat(shown));
+    const before = load("paidAmt");
+    save("paidAmtBefore", typeof before === "number" ? before : null);
+    save("paidAmt", Math.round(lastShare * 100) / 100);
   } else {
-    save("paidAmt", null);
+    const before = load("paidAmtBefore");
+    save("paidAmt", typeof before === "number" ? before : null);
+    save("paidAmtBefore", null);
   }
   render();
 });
@@ -2434,9 +2562,13 @@ window.__rulesRefresh = refreshRules;
     if (got.v === null) { msg.textContent = "Put the amount you sent in."; return; }
     save("paidAmt", got.v);
     msg.textContent = "";
+    askOpen = false;
     document.getElementById("paidAsk").style.display = "none";
     render();
   };
+  // "Put in what you've already sent" - the box, on demand, ticked or not.
+  const ss = document.getElementById("sentSome");
+  if (ss) ss.onclick = function () { askOpen = !askOpen; render(); };
 })();
 
 render();
