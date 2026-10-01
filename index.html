@@ -100,6 +100,10 @@
     <input type="checkbox" id="paidPartner" class="chk">
   </div>
   <div class="s"><button id="sentSome" class="mini" style="display:none">Put in what you've already sent</button></div>
+  <div class="s" id="sentLogBox" style="display:none">
+    <button id="sentLogHead" class="mini"></button>
+    <div id="sentLogList" style="display:none"></div>
+  </div>
   <div class="ed" id="paidAsk" style="display:none">
     <div class="note" style="margin:0 0 8px">How much have you sent him so far
     this month, all together? Put it in and I will work out what is left.</div>
@@ -818,6 +822,33 @@ let edits = load("edits") || {};
 // travel in the rules, so the codec and rules.enc know nothing about any of it.
 let extras = load("extras") || [];
 
+// WHAT SHE HAS SENT HIM, ONE LINE PER PAYMENT. Her bank shows his share and a
+// payback for something he bought her identically, with no reference field, so
+// this list is the only record of which was which - and paybacks never go in it,
+// so anything in her bank that is not here IS a payback. It records itself: the
+// tick, "I've sent the X" and the typed total each write their own line.
+// `paidAmt` is always the list's SUM, so every figure that reads it is unchanged.
+function sentLog(){ const l = load("sentLog"); return Array.isArray(l) ? l : []; }
+function saveSentLog(l){
+  save("sentLog", l);
+  const sum = Math.round(l.reduce(function(s, x){ return s + (+x.a || 0); }, 0) * 100) / 100;
+  save("paidAmt", l.length ? sum : null);
+}
+function addSent(a, how){
+  const l = sentLog();
+  const id = l.reduce(function(m, x){ return Math.max(m, x.id || 0); }, 0) + 1;
+  l.push({id: id, d: today(), a: Math.round(a * 100) / 100, how: how});
+  saveSentLog(l);
+  return id;
+}
+// ONCE: a total kept before the list existed becomes its first line, so moving to
+// the list changes nobody's figure by a penny.
+(function migrateSent(){
+  if (load("sentLog") !== null) return;
+  const old = load("paidAmt");
+  if (typeof old === "number") save("sentLog", [{id: 1, d: null, a: old, how: "start"}]);
+})();
+
 // MIGRATE ONCE, THEN FORGET. Any edit still keyed by array position is moved
 // onto the identity of whatever it pointed at, and the numeric key is dropped -
 // so it can never later attach itself to a different bill.
@@ -1086,6 +1117,8 @@ function renderSuggestion(){
 let lastShare = 0;
 // Whether she has opened the "what have you sent" box herself.
 let askOpen = false;
+// Whether she has opened the list of payments.
+let logOpen = false;
 
 // MOVED INTO NEXT MONTH = A ONE-OFF IN NEXT MONTH. A move past the cycle end
 // drops the bill from this month's total, which is right - but nothing told next
@@ -1341,6 +1374,47 @@ function render(keepList){
   if (pw) pw.textContent = partial ? "the rest of his" : "his";
   const ssb = document.getElementById("sentSome");
   if (ssb) ssb.style.display = paid ? "none" : "";
+  (function(){
+    const box = document.getElementById("sentLogBox");
+    const head = document.getElementById("sentLogHead");
+    const list = document.getElementById("sentLogList");
+    if (!box || !head || !list) return;
+    const lg = sentLog();
+    box.style.display = lg.length ? "" : "none";
+    if (!lg.length) return;
+    const tot = lg.reduce(function(s, x){ return s + (+x.a || 0); }, 0);
+    head.textContent = "Payments to " + P + " this month: " + gbp(tot)
+                     + (logOpen ? " \u25b4" : " \u25be");
+    head.onclick = function(){ logOpen = !logOpen; render(); };
+    list.style.display = logOpen ? "" : "none";
+    list.innerHTML = "";
+    lg.forEach(function(x){
+      const r = document.createElement("div");
+      r.className = "row";
+      const k = document.createElement("span");
+      k.className = "k";
+      k.textContent = x.how === "start" ? "sent before this list" : nice(x.d);
+      const v = document.createElement("span");
+      v.className = "v";
+      v.textContent = gbp(x.a) + " ";
+      const b = document.createElement("button");
+      b.className = "mini";
+      b.id = "sl" + x.id;
+      b.textContent = "remove";
+      // Removing the tick's own line unticks the box, so the two cannot disagree.
+      b.onclick = function(){
+        if (x.id === load("tickId")) {
+          save("tickId", null); save("paid", false);
+          document.getElementById("paidPartner").checked = false;
+        }
+        saveSentLog(sentLog().filter(function(y){ return y.id !== x.id; }));
+        render();
+      };
+      v.appendChild(b);
+      r.appendChild(k); r.appendChild(v);
+      list.appendChild(r);
+    });
+  })();
   const an = document.getElementById("partnerName");
   if (an) an.textContent = P;
   const an2 = document.getElementById("partnerName2");
@@ -1630,9 +1704,9 @@ function render(keepList){
     if (bf) bf.onclick = function () { save("balStale", false); render(); };
     const sr = document.getElementById("sentRest");
     if (sr) sr.onclick = function () {
-      const was = load("paidAmt");
-      save("paidAmtBefore", typeof was === "number" ? was : null);
-      save("paidAmt", Math.round(lastShare * 100) / 100);
+      const was = (typeof load("paidAmt") === "number") ? load("paidAmt") : 0;
+      const rest = Math.round((lastShare - was) * 100) / 100;
+      if (rest > 0.005) addSent(rest, "rest");
       // Money has just left, so the balance on screen is from before it went.
       save("balStale", true);
       render();
@@ -2209,6 +2283,16 @@ function changeText(){
          + it.lost.map(function(x){ return "- " + x.n + " (" + x.d + ")"; })
                   .join("\n");
   }
+  // A COPY OFF THE PHONE. This list is the only record of which transfers were
+  // his share, and a phone can be lost or cleared.
+  const lg = sentLog();
+  if (lg.length) {
+    const tot = lg.reduce(function(s, x){ return s + (+x.a || 0); }, 0);
+    out += "\n\nSent " + P + " this cycle: " + gbp(tot) + "\n"
+         + lg.map(function(x){
+             return "- " + (x.how === "start" ? "before the list" : x.d) + ": " + gbp(x.a);
+           }).join("\n");
+  }
   return out + "\n\nAre any of these permanent?";
 }
 
@@ -2260,14 +2344,16 @@ paid.addEventListener("change", () => {
   // UNTICKING UNDOES THE TICK. It used to ERASE the record, so the app forgot
   // she had sent him anything and went back to "he is owed the whole month" -
   // Eden: "now its gone so idk how much i owe him anymore", 1 Oct 2026.
+  // The tick writes ONE line - the rest of his share - and remembers which line
+  // it was, so the untick takes away exactly that and nothing else.
   if (paid.checked) {
-    const before = load("paidAmt");
-    save("paidAmtBefore", typeof before === "number" ? before : null);
-    save("paidAmt", Math.round(lastShare * 100) / 100);
+    const sum = (typeof load("paidAmt") === "number") ? load("paidAmt") : 0;
+    const rest = Math.round((lastShare - sum) * 100) / 100;
+    save("tickId", rest > 0.005 ? addSent(rest, "tick") : null);
   } else {
-    const before = load("paidAmtBefore");
-    save("paidAmt", typeof before === "number" ? before : null);
-    save("paidAmtBefore", null);
+    const tid = load("tickId");
+    if (tid) saveSentLog(sentLog().filter(function(x){ return x.id !== tid; }));
+    save("tickId", null);
   }
   render();
 });
@@ -2560,7 +2646,10 @@ window.__rulesRefresh = refreshRules;
     const got = readAmount(el.value, false);
     if (got.msg) { msg.textContent = got.msg; return; }
     if (got.v === null) { msg.textContent = "Put the amount you sent in."; return; }
-    save("paidAmt", got.v);
+    // "All together" - so it REPLACES the list with one line rather than adding
+    // to it; whatever was on the list is part of what she has just typed.
+    saveSentLog(got.v > 0 ? [{id: 1, d: null, a: got.v, how: "start"}] : []);
+    save("tickId", null);
     msg.textContent = "";
     askOpen = false;
     document.getElementById("paidAsk").style.display = "none";
