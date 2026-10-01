@@ -119,6 +119,7 @@
   <div class="l">Safe to spend</div>
   <div class="n" id="safe">&mdash;</div>
   <div class="s" id="safeNote"></div>
+  <div class="s" id="nextPay" style="display:none;margin-top:6px"></div>
   <div class="pace" id="paceBox">
     <div class="bar"><i id="barFill"></i><u id="barMark"></u></div>
     <div class="paceRow"><span id="paceL"></span><span id="paceR"></span></div>
@@ -1381,6 +1382,24 @@ function render(keepList){
   };
 
   document.getElementById("herSpare").textContent = gbp(herNow + carry + oneOffs);
+
+  // PAYDAY IS COMING - the last seven days of a cycle only. Reassurance, not
+  // arithmetic: it changes no figure, because safe-to-spend must never count
+  // money that has not arrived. Payday is the day after the cycle ends, which
+  // currentCycle() guarantees, so this cannot drift from the cycle itself.
+  // No income line is named - this file ships in the public shell.
+  (function(){
+    const np = document.getElementById("nextPay");
+    if (!np) return;
+    const next = addDays(new Date(D.cycleEnd + "T00:00:00Z"), 1);
+    const days = Math.round((next - new Date(t + "T00:00:00Z")) / 864e5);
+    if (days < 1 || days > 7) { np.style.display = "none"; np.textContent = ""; return; }
+    const when = next.toLocaleDateString("en-GB",
+                   {weekday: "long", day: "numeric", month: "long", timeZone: "UTC"});
+    np.textContent = days === 1 ? "payday is tomorrow, " + when
+                                : "payday is " + when + ", in " + days + " days";
+    np.style.display = "";
+  })();
   document.getElementById("hisSpare").textContent = gbp(hisNow + oneOffsHim);
   document.getElementById("bills").textContent   = gbp(billsNow);
   document.getElementById("toGo").textContent    = gbp(-out);
