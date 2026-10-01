@@ -216,8 +216,21 @@ function paydayFor(y,m){
   return d;
 }
 
+// ALWAYS THE CYCLE CONTAINING TODAY. Before payday in a month she is still
+// spending LAST month's payment, so step back a month. (No income line is named
+// in this file: it ships in the public shell, and naming one would publish
+// what she lives on.) Without this the app
+// rolled over eight days early every month - 93 days a year - and because every
+// saved value is keyed by the cycle, her month's entries vanished on the 1st.
+// Must match schedule.current_cycle; test_schedule compares them for 365 days and
+// separately checks today is inside the cycle on every one of them.
 function currentCycle(today){
-  const start = paydayFor(today.getUTCFullYear(), today.getUTCMonth()+1);
+  let ty = today.getUTCFullYear(), tm = today.getUTCMonth()+1;
+  let start = paydayFor(ty, tm);
+  if (start > today) {
+    tm--; if (tm < 1) { tm = 12; ty--; }
+    start = paydayFor(ty, tm);
+  }
   let y = start.getUTCFullYear(), m = start.getUTCMonth()+2;
   if (m > 12) { m = 1; y++; }
   return [start, addDays(paydayFor(y,m), -1)];
@@ -296,14 +309,10 @@ function buildModel(R, todayISO){
   const cyc = currentCycle(today);
   const a = cyc[0], b = cyc[1];
 
-  // THE PROJECTION STARTS AT TODAY WHEN TODAY IS BEFORE PAYDAY, and that is a
-  // fix rather than a detail. The cycle runs from the NEXT payday, so on the
-  // 1st to the 8th of a month the bills between now and then sat in no cycle at
-  // all - not in the one being shown, already past in the one it had stopped
-  // looking at. Measured over a year: 93 such days, and on the worst one the
-  // app would have called several hundred pounds safe to spend that was not.
-  const from = today < a ? today : a;
-  const cutoff = ymd(from);
+  // THE WHOLE CYCLE. currentCycle() always contains today, so the bills between
+  // today and payday are simply in it - nothing needs stitching in from a
+  // neighbouring cycle.
+  const cutoff = ymd(a);
 
   // GENERATE PER CYCLE, THEN FILTER. Anything whose date genuinely moves is
   // anchored to the START of the window it is generated in, so generating from
@@ -329,13 +338,6 @@ function buildModel(R, todayISO){
   }
 
   let ev = windowEvents(a, b);
-  if (today < a) {
-    // The days between today and payday belong to the cycle that is ENDING, so
-    // they get generated on that cycle's anchor rather than this one's.
-    let pm = a.getUTCMonth(), py = a.getUTCFullYear();
-    if (pm === 0) { pm = 12; py--; }
-    ev = windowEvents(paydayFor(py, pm), addDays(a, -1)).concat(ev);
-  }
   // Credits before debits on the same day, or £190 of bills gets projected as
   // leaving before the £1,756 that pays for them lands.
   ev.sort(function(x,y){ return x.d < y.d ? -1 : x.d > y.d ? 1 : y.a - x.a; });
@@ -753,24 +755,31 @@ const nice  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
 const long  = d => new Date(d+"T00:00:00").toLocaleDateString("en-GB",
               {day:"numeric", month:"long"});
 
-// SWEEP OLD CYCLES. Five keys per cycle were being written and none ever
-// removed, so the store grew forever and every stale cycle's edits sat there
-// being findable. The PREVIOUS cycle is kept deliberately - carry-over is
-// computed from it, so it is not litter yet - and anything older goes.
+// SWEEP OLD CYCLES. Keys per cycle were being written and none ever removed, so
+// the store grew forever and every stale cycle's edits sat there being findable.
+// Three cycles are kept and anything older goes:
+//   PREVIOUS  carry-over is computed from it, so it is not litter yet
+//   CURRENT   obviously
+//   NEXT      a month that has not happened is never litter. Nothing normally
+//             writes there - but the early rollover did, and the repair below
+//             has to find it, so the sweep must not get there first.
 (function sweep(){
   try {
     const keep = {};
     keep[K] = 1;
-    // NOT toISOString. This is the THIRD time the same trap has been walked
-    // into in this project: toISOString is UTC, and a local midnight in British
-    // Summer Time is 23:00 the PREVIOUS day in UTC - so the previous cycle's
-    // key came out a day early, matched nothing, and the sweep deleted the one
-    // month it was written to keep. Built from the local parts instead.
-    const start = new Date(D.cycleStart + "T00:00:00");
-    start.setMonth(start.getMonth() - 1);
-    const pad = n => (n < 10 ? "0" : "") + n;
-    keep["spare:" + start.getFullYear() + "-" + pad(start.getMonth() + 1)
-         + "-" + pad(start.getDate())] = 1;
+    // THE PREVIOUS CYCLE BY PAYDAY, NOT BY CALENDAR DATE. Stepping the cycle's
+    // own date back a month gives the 9th, but in a month where payday moved off
+    // a weekend the cycle started on the 7th or 8th - so the sweep deleted the
+    // exact cycle the carry-over reads (9 Aug 2026 was a Sunday: payday the 7th).
+    // Same computation as the carry-over's prevStart, so the two cannot disagree.
+    // Built from paydayFor's UTC date, so the British Summer Time trap that bit
+    // this line three times - a local midnight read through toISOString - does
+    // not apply.
+    const p = D.cycleStart.split("-");
+    let py = +p[0], pm = +p[1] - 1;
+    if (pm < 1) { pm = 12; py--; }
+    keep["spare:" + ymd(paydayFor(py, pm))] = 1;
+    keep["spare:" + ymd(addDays(new Date(D.cycleEnd + "T00:00:00Z"), 1))] = 1;
     const doomed = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -825,6 +834,72 @@ let extras = load("extras") || [];
     delete edits[k];
   });
   try { save("edits", edits); } catch (err) {}
+})();
+
+// REPAIR WHAT THE EARLY ROLLOVER WROTE. Until 1 Oct 2026 the app rolled into the
+// next cycle eight days before payday, and every value it saves is keyed by
+// cycle - so on those days it wrote into the NEXT cycle's keys. A correct app
+// never writes to a cycle that has not started, so anything there now was put
+// there by that bug. Two of those values would have poisoned the next cycle:
+// the carry-over freezes on first sight of a new cycle (it froze a MID-month
+// leftover), and a "sent" tick was made against the wrong month's figure.
+// Backed up first, then: a newer balance and this cycle's edits come home, the
+// derived values are cleared to be recomputed on payday, and one-offs and the
+// next cycle's own edits stay where they are. Idempotent.
+(function repairEarlyRollover(){
+  if (!D || !D.cycleEnd) return;
+  const nextStart = ymd(addDays(new Date(D.cycleEnd + "T00:00:00Z"), 1));
+  const NK = "spare:" + nextStart + ":";
+  const POISON = ["carry", "carryFrom", "leftover", "paceFrom", "suggest",
+                  "balStale", "paid", "paidAmt", "bal", "balOn"];
+  // `localStorage`, not `window.localStorage` - the rest of this file uses the
+  // bare name, and in the test harness `window` can be absent, which would
+  // throw here and quietly switch the whole repair off.
+  let ls;
+  try { ls = localStorage; } catch (e) { return; }
+  const raw = function(k){ return ls.getItem(NK + k); };
+  const any = POISON.some(function(k){ return raw(k) !== null; })
+              || raw("edits") !== null;
+  if (!any) return;
+  try {
+    // 1. BACK UP everything first, once. Nothing she typed is lost to this.
+    POISON.concat(["edits"]).forEach(function(k){
+      const v = raw(k);
+      if (v !== null && ls.getItem(NK + "early-backup:" + k) === null) {
+        ls.setItem(NK + "early-backup:" + k, v);
+      }
+    });
+    // 2. A BALANCE READING belongs to the day it was read, which is in THIS
+    //    cycle. Bring it home only if it is newer than the one here.
+    let nb = null, nbOn = null;
+    try { nb = JSON.parse(raw("bal")); nbOn = JSON.parse(raw("balOn")); } catch (e) {}
+    const hereOn = load("balOn");
+    if (nb !== null && nbOn && (!hereOn || nbOn > hereOn)) {
+      save("bal", nb); save("balOn", nbOn);
+    }
+    // 3. EDITS dated inside THIS cycle come home; later ones are the next
+    //    cycle's and stay. Never overwrite an edit already here.
+    let ne = null;
+    try { ne = JSON.parse(raw("edits")); } catch (e) {}
+    if (ne && typeof ne === "object") {
+      let moved = 0;
+      const keep = {};
+      Object.keys(ne).forEach(function(k){
+        const d = String(k).split("|")[0];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d <= D.cycleEnd) {
+          if (!edits[k]) { edits[k] = ne[k]; moved++; }
+        } else {
+          keep[k] = ne[k];
+        }
+      });
+      if (moved) save("edits", edits);
+      if (Object.keys(keep).length) ls.setItem(NK + "edits", JSON.stringify(keep));
+      else ls.removeItem(NK + "edits");
+    }
+    // 4. CLEAR everything derived from a rollover that had not happened. All of
+    //    it is recomputed properly when that cycle really starts.
+    POISON.forEach(function(k){ ls.removeItem(NK + k); });
+  } catch (err) {}
 })();
 // AN EDIT WHOSE BILL HAS MOVED IS STILL HER EDIT. Edits are keyed `date|name`,
 // so when a rules update changes a bill's date the edit stops matching anything
@@ -1031,12 +1106,10 @@ function render(keepList){
   let billsNow = 0, ownENow = 0, ownPNow = 0;
   ev.forEach(function(e){
     if (e.extra || e.a >= 0) return;
-    // ONLY WHAT FALLS INSIDE THE CYCLE. The event list deliberately reaches
-    // back to today when today is before payday, so the bills due before payday
-    // are subtracted from safe-to-spend - but those belong to the cycle that is
-    // ENDING and must not be charged to the one starting. Summing the whole
-    // list put 83 days a year wrong, by up to 466.86, and once showed her spare
-    // as a negative number when she had 271.75.
+    // ONLY WHAT FALLS INSIDE THE CYCLE. The event list IS the cycle now, so this
+    // excludes nothing in normal use - it stays as a guard, because charging one
+    // cycle's bills to another once showed her spare as a negative number when
+    // she had 271.75.
     if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
     // A BILL ONE OF THEM PAYS ALONE comes off that share only, with her edits
     // applied - so skipping or correcting it moves only its owner's spare.
@@ -1240,12 +1313,9 @@ function render(keepList){
   const builtCycle = ymd(currentCycle(new Date((D.built || D.cycleStart)
                                                + "T00:00:00Z"))[0]);
   const bakedIsOurs = D.cycleStart <= builtCycle;
-  // THE PREVIOUS CYCLE'S KEY. NOT currentCycle(cycleStart - 1 day): that reads
-  // the month off the date it is given and returns the cycle whose payday falls
-  // in it, so the day before payday resolves to the cycle that is ABOUT to
-  // start - the same one - and the lookup found nothing every time. Step back a
-  // calendar month and ask for that month's payday instead. The weekend shift
-  // never moves a payday more than two days, so it cannot cross a month end.
+  // THE PREVIOUS CYCLE'S KEY: step back a calendar month and ask for that
+  // month's payday. The weekend shift never moves a payday more than two days,
+  // so it cannot cross a month end.
   const prevStart = (function(){
     const p = D.cycleStart.split("-");
     let y = +p[0], m = +p[1] - 1;
@@ -1453,19 +1523,10 @@ function render(keepList){
     // PACE, the Monzo idea: how much of the money is left against how much of the
     // cycle is left. Tells her she is running hot BEFORE the money is gone.
     //
-    // ONLY MEANINGFUL ONCE THE CYCLE HAS STARTED. On the 8th, with the cycle
-    // beginning on payday, whatever was left over from LAST month was measured
-    // against THIS month's allowance and reported "£232.78 behind" - frightening,
-    // and about a month that had not begun.
+    // The cycle always contains today, so the pace is always about a month
+    // that has begun.
     pb.style.display = "";
-    if (D.cycleStart > t) {
-      document.getElementById("barFill").style.width = "0%";
-      document.getElementById("barMark").style.left = "0%";
-      document.getElementById("paceL").textContent = "cycle starts " + long(D.cycleStart);
-      const pr0 = document.getElementById("paceR");
-      pr0.textContent = gbp(Math.max(herNow + carry + oneOffs, 0)) + " to come";
-      pr0.className = "pos";
-    } else {
+    {
     const s = new Date(D.cycleStart+"T00:00:00"), e2 = new Date(D.cycleEnd+"T00:00:00");
     const nowD = new Date(t+"T00:00:00");
     const totalDays = Math.round((e2-s)/864e5) + 1;
