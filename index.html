@@ -1341,7 +1341,11 @@ function render(keepList){
   // it's out" - never too high; at worst low for a day, until "Gone out" or the
   // next day's balance.] MONEY IN on the anchor day still counts as landed: that
   // is the payday rule the holdback and the "lands today" note are built on.
-  const future = ev.filter(e => (e.a < 0 ? e.d >= anchor : e.d > anchor)
+  // ONE-OFFS ARE NOT HELD: they have no "Gone out" button, and the add form tells
+  // her to date one the day it actually happened - so one dated today has
+  // almost always already left, and holding it would count it twice with no
+  // way to say so.
+  const future = ev.filter(e => ((e.a < 0 && !e.extra) ? e.d >= anchor : e.d > anchor)
                                 && !e.goneOut && e.d <= D.cycleEnd);
 
   const out = future.reduce((s,e)=> e.a<0 ? s-e.a : s, 0);
