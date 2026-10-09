@@ -1,4 +1,4 @@
-const CACHE = "spare-v6ad3dbd2fc2e";
+const CACHE = "spare-v6572ffc5702b";
 const FILES = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 

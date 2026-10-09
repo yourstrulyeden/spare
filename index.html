@@ -2008,8 +2008,11 @@ function removeExtra(i){
 // force: skip the tap-again-to-close toggle. Used when render() is putting
 // back an editor it destroyed, where a "second tap" never happened.
 function openEditor(i, rowEl, force){
-  // A one-off is not a rule that behaved oddly, so it does not get the
-  // skip/move/amount editor - it gets removed.
+  // A one-off is not a rule, so it does not get the skip/move editor. It DOES
+  // get its amount: a bill moved into this month arrives here as a one-off, and
+  // what it actually came to is exactly the thing she needs to correct. Eden,
+  // 9 Oct 2026: "i cant edit the amount". Removing and retyping it would also
+  // lose the link back to the bill it was moved from.
   if (String(i).charAt(0) === "x") {
     if (openRow) { openRow.remove(); openRow = null; }
     const b = document.createElement("div");
@@ -2026,9 +2029,26 @@ function openEditor(i, rowEl, force){
       + '<button id="xWJt" class="' + (cur === "j" ? "on" : "") + '">Split</button>'
       + '<button id="xWTh" class="' + (cur === "a" ? "on" : "") + '">' + esc(P) + '</button>'
       + '</div>'
+      + '<div class="f"><input id="xeAmt" type="text" inputmode="decimal" placeholder="'
+      + (extras[xj] ? Math.abs(extras[xj].a).toFixed(2) : "") + '"></div>'
+      + '<div class="note" id="xeMsg"></div>'
       + '<div class="b"><button id="xDel">Remove this one-off</button></div>';
     rowEl.parentNode.insertBefore(b, rowEl.nextSibling);
     openRow = b; openKey = null;
+    b.onclick = ev2 => ev2.stopPropagation();
+    // The new figure is what it CAME TO, always positive; money out stays out and
+    // money in stays in. Applied when she is done typing (`change` fires on Done
+    // or on tapping away), so the box is never rebuilt under her finger. A
+    // refusal is said and nothing is saved.
+    document.getElementById("xeAmt").onchange = ev2 => {
+      const got = readAmount(ev2.target.value, false);
+      const m = document.getElementById("xeMsg");
+      if (got.msg) { if (m) m.textContent = got.msg; return; }
+      if (got.v === null || !extras[xj]) return;
+      extras[xj].a = (extras[xj].a < 0 ? -1 : 1) * Math.round(got.v * 100) / 100;
+      save("extras", extras);
+      render();
+    };
     const setX = v => {
       if (!extras[xj]) return;
       if (v) { extras[xj].w = v; } else { delete extras[xj].w; }
