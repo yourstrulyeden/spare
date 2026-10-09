@@ -291,6 +291,13 @@ function occurrences(it, frm, to){
     while (d > frm) d = addDays(d,-28);
     while (d < frm) d = addDays(d,28);
     while (d <= to) { out.push(d); d = addDays(d,28); }
+  } else if (/^d\d+$/.test(e)) {
+    // EVERY N DAYS from a real date. Must match schedule.py's "N-day".
+    const n = parseInt(e.slice(1), 10);
+    let d = new Date(o + "T00:00:00Z");
+    while (d > frm) d = addDays(d,-n);
+    while (d < frm) d = addDays(d,n);
+    while (d <= to) { out.push(d); d = addDays(d,n); }
   }
   // AN END DATE, INCLUSIVE. Kept rather than deleted so a last occurrence
   // already paid inside a running cycle still counts. Must match schedule.py
