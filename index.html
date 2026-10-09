@@ -1363,9 +1363,32 @@ function render(keepList){
   // still to go" while safe-to-spend counted X as hers. The one case still left
   // at nothing is a tick with no amount on record - asked about below, not
   // guessed.
+  // HIS ONE-OFFS ARE PART OF WHAT HE IS SENT. A one-off that is his, or his
+  // part of a joint one, leaves HER account on his behalf, so it comes off what
+  // she sends him. The spare row always included it and this did not: on payday
+  // 9 Oct 2026 the app said send 163.30 while his spare read 71.06, the gap
+  // being his 40 of food moved into October and his part of the gardener - money
+  // she would have paid for him twice, and held back from her own safe-to-spend
+  // as well.
+  let oneOffsHer = 0, oneOffsJoint = 0, oneOffsHis = 0;
+  ev.forEach(function(e){
+    if (!e.extra) return;
+    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
+    if (e.w === "j") { oneOffsJoint += e.a; return; }
+    if (e.w === "a") { oneOffsHis += e.a; return; }
+    oneOffsHer += e.a;
+  });
+  oneOffsHer   = Math.round(oneOffsHer * 100) / 100;
+  oneOffsJoint = Math.round(oneOffsJoint * 100) / 100;
+  oneOffsHis   = Math.round(oneOffsHis * 100) / 100;
+  // What each of them actually carries. Rounded once, here, so the headline,
+  // the send figure and the pace bar cannot disagree about a half penny.
+  const oneOffs    = Math.round((oneOffsHer + oneOffsJoint * herShare) * 100) / 100;
+  const oneOffsHim = Math.round((oneOffsHis + oneOffsJoint * hisShare) * 100) / 100;
+
   const sentSoFar = load("paidAmt");
   const hasSent = typeof sentSoFar === "number";
-  const shareNow = Math.max(hisNow, 0);
+  const shareNow = Math.max(Math.round((hisNow + oneOffsHim) * 100) / 100, 0);
   lastShare = shareNow;
   const owedPartner = !incomeLanded ? 0
     : (paid && !hasSent) ? 0
@@ -1446,21 +1469,8 @@ function render(keepList){
   // and "a" is his alone. The BALANCE is untouched by this - the money leaves her
   // account on its day whoever it belonged to - so only the two spare figures
   // below change.
-  let oneOffsHer = 0, oneOffsJoint = 0, oneOffsHis = 0;
-  ev.forEach(function(e){
-    if (!e.extra) return;
-    if (e.d < D.cycleStart || e.d > D.cycleEnd) return;
-    if (e.w === "j") { oneOffsJoint += e.a; return; }
-    if (e.w === "a") { oneOffsHis += e.a; return; }
-    oneOffsHer += e.a;
-  });
-  oneOffsHer   = Math.round(oneOffsHer * 100) / 100;
-  oneOffsJoint = Math.round(oneOffsJoint * 100) / 100;
-  oneOffsHis   = Math.round(oneOffsHis * 100) / 100;
-  // What each of them actually carries. Rounded once, here, so the headline and
-  // the pace bar cannot disagree about a half penny.
-  const oneOffs    = Math.round((oneOffsHer + oneOffsJoint * herShare) * 100) / 100;
-  const oneOffsHim = Math.round((oneOffsHis + oneOffsJoint * hisShare) * 100) / 100;
+  // (oneOffs and oneOffsHim are worked out further up, before what she sends
+  // him - see "HIS ONE-OFFS ARE PART OF WHAT HE IS SENT".)
 
   // ---- CARRY-OVER ----------------------------------------------------
   // The baked figure belongs to the cycle it was MEASURED for. Past that it is
