@@ -1334,7 +1334,15 @@ function render(keepList){
   // happened - and it was still being subtracted from safe-to-spend, so the
   // money was out of the budget AND held back from the spending. Next month's
   // income is what pays for a payment in next month.
-  const future = ev.filter(e => e.d > anchor && !e.goneOut && e.d <= D.cycleEnd);
+  // A BILL DUE ON THE ANCHOR DAY IS STILL TO GO until she ticks it. Assuming it
+  // was already inside the balance made safe-to-spend too high for as long as it
+  // had not left - Eden, payday 9 Oct 2026: a subscription left mid-afternoon
+  // and the app had been spending it all day. [EDEN, on Seph's rec: "Hold it back till
+  // it's out" - never too high; at worst low for a day, until "Gone out" or the
+  // next day's balance.] MONEY IN on the anchor day still counts as landed: that
+  // is the payday rule the holdback and the "lands today" note are built on.
+  const future = ev.filter(e => (e.a < 0 ? e.d >= anchor : e.d > anchor)
+                                && !e.goneOut && e.d <= D.cycleEnd);
 
   const out = future.reduce((s,e)=> e.a<0 ? s-e.a : s, 0);
   const inn = future.reduce((s,e)=> e.a>0 ? s+e.a : s, 0);
