@@ -23,8 +23,14 @@ self.addEventListener("fetch", e => {
   // Straight to the network, and the app handles a failure itself.
   if (new URL(e.request.url).pathname.endsWith("rules.enc")) return;
 
+  // ASK THE SERVER EVERY TIME, NOT THE PHONE'S OWN HTTP CACHE. GitHub Pages
+  // sends max-age=600, and a plain fetch() from here honours it - so for ten
+  // minutes after a push every reopen got the OLD page, however many times she
+  // closed it. 9 Oct 2026: a fix was live and her phone still showed the old
+  // figure. "no-cache" revalidates (a 304 when nothing changed, so it costs a
+  // header round trip); offline still falls to the saved copy below.
   e.respondWith(
-    fetch(e.request).then(r => {
+    fetch(e.request, {cache: "no-cache"}).then(r => {
       // ONLY CACHE A GOOD RESPONSE. Cache.put stores anything it is given,
       // unlike Cache.add - so a 404 or a 503 during a deploy window would
       // become the permanently cached shell, and every load afterwards would
