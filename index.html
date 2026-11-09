@@ -1094,19 +1094,75 @@ function readAmount(txt, allowNegative){
 //
 // Stored rather than held in a variable, because a render would otherwise wipe
 // it a fraction of a second after it appeared.
+// RETURNS whether it offered anything, so a caller with a fallback (the partner
+// tick's "this balance is from before you sent it") knows whether to use it.
 function suggestBalance(delta, why){
   const cur = readAmount(document.getElementById("bal").value, true);
-  if (cur.v === null || cur.msg) return;   // nothing sensible to adjust
+  if (cur.v === null || cur.msg) return false;   // nothing sensible to adjust
   const to = Math.round((cur.v + delta) * 100) / 100;
   save("suggest", {to: to, from: cur.v, why: String(why || ""),
                    delta: Math.round(delta * 100) / 100});
+  return true;
+}
+
+// THE CYCLE BEFORE THIS ONE, by payday: step back a calendar month and ask for
+// that month's payday. The weekend shift never moves a payday more than two days,
+// so it cannot cross a month end. The carry-over and the new-month estimate both
+// read last month through this, so they cannot disagree about which month it was.
+function prevCycleStart(){
+  const p = D.cycleStart.split("-");
+  let y = +p[0], m = +p[1] - 1;
+  if (m < 1) { m = 12; y--; }
+  return ymd(paydayFor(y, m));
+}
+
+// A NEW MONTH STARTS WITH AN EMPTY BALANCE BOX, and on payday 9 Nov 2026 Eden
+// asked why she should have to type it when the app knows her last reading and
+// what lands on payday [her ruling, on Seph's rec: "Estimate it, clearly marked"]. It is OFFERED THROUGH THE SUGGESTION BOX, never written - the 9 Sept
+// ruling above - so one tap takes it and the figure still only arrives by her hand.
+// Last month's final reading + money in since + bills gone since. It cannot see
+// what she spent after that reading, and says so: the 8 Nov reading was 2.13 and
+// a 10.22 dress went after it.
+function newMonthEstimate(t){
+  try {
+    const ps = prevCycleStart();
+    const pb = readAmount(JSON.parse(localStorage.getItem("spare:" + ps + ":bal")), true);
+    const po = JSON.parse(localStorage.getItem("spare:" + ps + ":balOn"));
+    if (pb.v === null || pb.msg) return null;
+    let inn = 0, out = 0;
+    eventsNow().forEach(function(e){
+      if (!e.a || e.d < D.cycleStart || e.d > t) return;
+      if (e.a > 0) inn += e.a;
+      // the due-today rule: a bill dated today is still to go until ticked;
+      // a one-off dated today has already happened
+      else if (e.extra || e.goneOut || e.d < t) out -= e.a;
+    });
+    const r2 = function(x){ return Math.round(x * 100) / 100; };
+    return {to: r2(pb.v + inn - out), from: pb.v, on: po, inn: r2(inn), out: r2(out)};
+  } catch (e) { return null; }
 }
 
 function renderSuggestion(){
   const box = document.getElementById("balSuggest");
   if (!box) return;
-  const s = load("suggest");
   const cur = readAmount(document.getElementById("bal").value, true);
+  if (cur.v === null && !cur.msg && !load("bal") && !load("estNo")) {
+    const est = newMonthEstimate(today());
+    if (est) {
+      save("suggest", {to: est.to, from: null, fresh: true, why: ""});
+      box.style.display = "";
+      document.getElementById("balSuggestWhy").innerHTML =
+        "New month. Your last balance was " + gbp(est.from)
+        + (est.on ? " on " + long(est.on) : "")
+        + (est.inn ? ", " + gbp(est.inn) + " has come in" : "")
+        + (est.out ? " and " + gbp(est.out) + " has gone out" : "")
+        + ". That makes about <b>" + gbp(est.to) + "</b>, but anything you spent"
+        + " after that reading is not in it. Check your bank first.";
+      document.getElementById("balYes").textContent = "Yes, make it " + gbp(est.to);
+      return;
+    }
+  }
+  const s = load("suggest");
   // EXPIRES ON ITS OWN. A suggestion that outlives the balance it was computed
   // against is a lie - she may have typed a fresh figure off her bank in the
   // meantime, which is exactly the thing this must never quietly overwrite.
@@ -1497,12 +1553,7 @@ function render(keepList){
   // THE PREVIOUS CYCLE'S KEY: step back a calendar month and ask for that
   // month's payday. The weekend shift never moves a payday more than two days,
   // so it cannot cross a month end.
-  const prevStart = (function(){
-    const p = D.cycleStart.split("-");
-    let y = +p[0], m = +p[1] - 1;
-    if (m < 1) { m = 12; y--; }
-    return ymd(paydayFor(y, m));
-  })();
+  const prevStart = prevCycleStart();
   let carrySrc = "";
   let carry;
   const mine = load("carry");
@@ -1740,7 +1791,11 @@ function render(keepList){
       const rest = Math.round((lastShare - was) * 100) / 100;
       if (rest > 0.005) addSent(rest, "rest");
       // Money has just left, so the balance on screen is from before it went.
-      save("balStale", true);
+      // OFFERED LIKE ANY BILL GONE OUT [Eden, 9 Nov 2026: "should have the same
+      // function as the other bills going out ... 'lower the balance by x?'"];
+      // the old re-read-your-balance warning only when there is nothing to adjust.
+      const offered = rest > 0.005 && suggestBalance(-rest, P + "'s " + gbp(rest));
+      save("balStale", !offered);
       render();
     };
 
@@ -2402,10 +2457,17 @@ paid.addEventListener("change", () => {
     const sum = (typeof load("paidAmt") === "number") ? load("paidAmt") : 0;
     const rest = Math.round((lastShare - sum) * 100) / 100;
     save("tickId", rest > 0.005 ? addSent(rest, "tick") : null);
+    // OFFERED LIKE ANY BILL GONE OUT [Eden, 9 Nov 2026: the partner tick should ask
+    // "lower the balance by x?" the same way a bill going out does]. The re-read
+    // warning above stays only for when there is no balance to adjust.
+    if (rest > 0.005 && suggestBalance(-rest, P + "'s " + gbp(rest))) save("balStale", false);
   } else {
     const tid = load("tickId");
     if (tid) saveSentLog(sentLog().filter(function(x){ return x.id !== tid; }));
     save("tickId", null);
+    // an untick takes back the offer the tick made, if it is still standing
+    const s = load("suggest");
+    if (s && /'s /.test(s.why || "") && s.why.indexOf(P) === 0) save("suggest", null);
   }
   render();
 });
@@ -2684,7 +2746,13 @@ window.__rulesRefresh = refreshRules;
     save("suggest", null);
     render();
   };
-  no.onclick = function () { save("suggest", null); render(); };
+  no.onclick = function () {
+    // a refused new-month estimate stays refused for this month, or the next
+    // render would offer it straight back
+    const s = load("suggest");
+    if (s && s.fresh) save("estNo", true);
+    save("suggest", null); render();
+  };
 })();
 
 
