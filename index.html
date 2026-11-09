@@ -94,7 +94,10 @@
 
 <div class="card">
   <label for="bal">Balance right now</label>
-  <input id="bal" type="text" inputmode="decimal" placeholder="0.00">
+  <!-- NOT "0.00": an empty box at the start of every cycle showed a grey 0.00 that
+       read as "your balance is zero" (payday, 9 Nov 2026). The box is empty on
+       purpose - the app cannot see the bank - so the hint says what to do. -->
+  <input id="bal" type="text" inputmode="decimal" placeholder="type today's from your bank">
   <div class="row" id="partnerRow" style="border:0;padding-bottom:0">
     <span class="k">Sent <b id="partnerName"></b> <span id="partnerWord">his</span> <b id="partnerAmt"></b>?</span>
     <input type="checkbox" id="paidPartner" class="chk">
