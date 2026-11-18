@@ -2169,7 +2169,15 @@ function openEditor(i, rowEl, force){
     + '<div class="f"><input id="eAmt" type="text" inputmode="decimal" placeholder="'
     + Math.abs(e.a).toFixed(2) + '" value="' + (ed.amount!=null?ed.amount:"") + '">'
     + '<input id="eDate" type="date" value="' + (ed.date || e.d) + '"></div>'
-    + '<div class="note" id="eMsg"></div>';
+    + '<div class="note" id="eMsg"></div>'
+    // ASK, DON'T ASSUME [Eden, on Seph's rec, 18 Nov 2026]: a payment corrected to its
+    // real figure on or after its day has nearly always already left, and an
+    // untick here held it back a second time from a balance that already had it
+    // out. Offered as one tap; never ticked for her.
+    + ((e.a < 0 && ed.amount != null && !ed.gone && !ed.skip
+        && (ed.date || e.d) <= today())
+       ? '<div class="b" id="eAskRow"><button id="eAsk">Gone out too? Tap if it has</button></div>'
+       : '');
   rowEl.after(box);
   openRow = box; openKey = i;
   const say = function(m){
@@ -2195,6 +2203,8 @@ function openEditor(i, rowEl, force){
     if (nowGone && amt) suggestBalance(amt, e.n);
     box.remove(); openRow = null; openKey = null; render();
   };
+  const askBtn = document.getElementById("eAsk");
+  if (askBtn) askBtn.onclick = () => document.getElementById("eGone").onclick();
   document.getElementById("eSkip").onclick = () => {
     edits[i] = edits[i] || {}; edits[i].skip = !edits[i].skip;
     if (emptyEdit(edits[i])) delete edits[i];
